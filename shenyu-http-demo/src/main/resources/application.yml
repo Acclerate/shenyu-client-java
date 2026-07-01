@@ -1,0 +1,55 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# =====================================================================
+# 公共配置（所有 profile 共享）
+# =====================================================================
+# 端口相关差异项在各自 profile 文件中定义：
+#   - server.port
+#   - shenyu.client.http.props.port
+# 在 IDEA Run Configuration 的 "Active profiles" 填入 8179 或 8189 即可。
+# =====================================================================
+
+server:
+  port: 8380   # 默认值，各 profile 可覆盖
+
+spring:
+  application:
+    name: shenyu-http-demo
+  main:
+    allow-bean-definition-overriding: true
+
+# === ShenYu client registration (HTTP) ===
+shenyu:
+  register:
+    registerType: http
+    serverLists: http://localhost:9096
+    props:
+      username: admin
+      password: 1qaz!QAZ
+  client:
+    http:
+      props:
+        appName: http-demo
+        contextPath: /http-demo11
+        host: 10.19.236.150
+        isFull: false
+
+logging:
+  level:
+    org.apache.shenyu: INFO
+    root: INFO
