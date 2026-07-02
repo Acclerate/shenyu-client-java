@@ -376,3 +376,32 @@ curl -X POST http://localhost:8390/v3/pay/notify-trigger
 控制台日志会打印每个环节的签名串、签名值、验签结果，便于核对。
 
 密钥文件位于 `shenyu-sign-demo/src/main/resources/keys/`（仅供 Demo，**禁止生产使用**）。
+
+
+
+## 十、网关验签失败返回真实 HTTP 401
+
+网关验签失败返回真实 HTTP 401
+需要在 `PayRsaSignService` 里直接操作 `exchange` 的响应状态（但这绕过了` ShenYu `的标准错误返回机制，需谨慎）。标准做法是接受`「HTTP 200 + body code:401」`——这也是微信支付 V3、支付宝等主流支付网关的惯例（业务错误用 body code 区分，传输层保持 200，便于客户端统一解析）。
+
+```bash
+{
+    "步骤3_BIZ响应验签结果": "通过（PAY公钥验签成功）",
+    "步骤2_PAY响应体": "{\"code\":\"SUCCESS\",\"data\":{\"trade_no\":\"db3020c7cbbf4a9bbace610195300f19\",\"prepay_id\":\"wxdb3020c7cbbf4a9b\"},\"message\":\"ok\"}",
+    "步骤2_PAY处理并加签响应_httpCode": 200,
+    "步骤1_请求体": "{\"appid\":\"wxd678efh567hg6787\",\"mchid\":\"1900007291\",\"description\":\"Image形象店-深圳腾大-QQ公仔\",\"out_trade_no\":\"1217752501201407033233368018\",\"amount\":{\"total\":100,\"currency\":\"CNY\"}}",
+    "目标URL": "http://localhost:9196/pay-demo/v3/pay/transactions/jsapi",
+    "步骤2_响应签名头": "ts=1782954807 nonce=49472b7107ae4ba8b953f37c28f3c089",
+    "步骤1_BIZ加签全过程_私钥加密": {
+        "算法": "SHA256withRSA（业务私钥加密）",
+        "待签名串_5行_换行替换": "POST↩/pay-demo/v3/pay/transactions/jsapi↩1782954807↩cecb5b33440148c4a73b3422e62958d2↩{\"appid\":\"wxd678efh567hg6787\",\"mchid\":\"1900007291\",\"description\":\"Image形象店-深圳腾大-QQ公仔\",\"out_trade_no\":\"1217752501201407033233368018\",\"amount\":{\"total\":100,\"currency\":\"CNY\"}}↩",
+        "method": "POST",
+        "签名值_sign": "ghyVWQbBoEMw22RAE86TnLjpQWLX6Gxz+DRdmsxrMo+dqTOZDeRaMj+8qN76Gi9WAu1n0H1xdTon4zpNZSXzvLziM3Z5RegjnKzfqZ5Vc56wb+mXfpESd4Kg08k9+0kFU27+ko5+KYcOoStlJbRj+1zfsu8b9212Fm8vXziqkHwN5ATJUaEPM+FNmsrJuuPjhe4ryEzWt26VR2IYzn7xHMmr2KPDCvh1bDDdOqeQZ8YKNWYKb3ZiDCeeVH7iCkos5gZV/NRproKPW2bAYas16qcmc3BmQ984Yg+R4JG+TXXYAPqV/mPJy2ovLnfPmmoAh5yoMwP5Wl0VgiD+L8Z8Vg==",
+        "注入请求头": "X-Pay-Timestamp / X-Pay-Nonce / X-Pay-Sign",
+        "nonce": "cecb5b33440148c4a73b3422e62958d2",
+        "url": "/pay-demo/v3/pay/transactions/jsapi",
+        "timestamp": "1782954807"
+    }
+}
+
+```

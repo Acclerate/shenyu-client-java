@@ -20,6 +20,7 @@ import java.security.PublicKey;
 import java.security.Signature;
 import java.time.Instant;
 import java.util.Base64;
+import org.springframework.http.HttpStatus;
 
 /**
  * PayRsaSignService.
@@ -72,7 +73,7 @@ public class PayRsaSignService implements SignService {
             if (timestamp == null || nonce == null || sign == null) {
                 LOG.warn("[GW-Sign] 缺少签名头 ts={} nonce={} sign={}",
                         timestamp != null, nonce != null, sign != null);
-                return VerifyResult.fail("missing X-Pay-* header");
+                return fail401(exchange, "missing X-Pay-* header");
             }
 
             // 时间戳防重放（±300s）
@@ -80,12 +81,12 @@ public class PayRsaSignService implements SignService {
             try {
                 ts = Long.parseLong(timestamp);
             } catch (NumberFormatException e) {
-                return VerifyResult.fail("invalid timestamp format");
+                return fail401(exchange, "invalid timestamp format");
             }
             long now = Instant.now().getEpochSecond();
             if (Math.abs(now - ts) > TIMESTAMP_TOLERANCE_SECONDS) {
                 LOG.warn("[GW-Sign] 时间戳过期 ts={} now={} diff={}s", ts, now, Math.abs(now - ts));
-                return VerifyResult.fail("timestamp expired");
+                return fail401(exchange, "timestamp expired");
             }
 
             // 解法A核心：用网关收到的原始路径（带 contextPath）
@@ -118,12 +119,32 @@ public class PayRsaSignService implements SignService {
                 return VerifyResult.success();
             } else {
                 LOG.warn("[GW-Sign] ❌ 验签失败（签名串与sign不匹配）");
-                return VerifyResult.fail("sign verify failed");
+                return fail401(exchange, "sign verify failed");
             }
         } catch (Exception e) {
             LOG.error("[GW-Sign] 验签异常", e);
-            return VerifyResult.fail("verify error: " + e.getMessage());
+            return fail401(exchange, "verify error: " + e.getMessage());
         }
+    }
+
+    /**
+     * 统一失败出口：设置真实 HTTP 401 状态码 + 返回 VerifyResult.fail.
+     *
+     * <p>ShenYu 原生 {@code WebFluxResultUtils.result()} 在写错误 body 时不会设置 HTTP 状态码
+     * （默认 200，错误码只进 body JSON）。本方法在 SignPlugin 调用 failedResult 写 body 之前，
+     * 先给 exchange 的 response 设置 {@link HttpStatus#UNAUTHORIZED}，
+     * 让验签失败时传输层也返回真实 401，而非 200。
+     *
+     * <p>此时 response 尚未 committed（SignPlugin 还在 doExecute 中），
+     * 后续 writeWith 会沿用此状态码。
+     *
+     * @param exchange 网关交换器
+     * @param reason   失败原因（进 body JSON 的 message 字段）
+     * @return VerifyResult.fail(reason)
+     */
+    private VerifyResult fail401(final ServerWebExchange exchange, final String reason) {
+        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+        return VerifyResult.fail(reason);
     }
 
     @Override

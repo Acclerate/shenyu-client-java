@@ -96,7 +96,8 @@ public final class PaySignInterceptor implements Interceptor {
         Request signed = original.newBuilder()
                 .addHeader(SignConstants.X_PAY_TIMESTAMP, timestamp)
                 .addHeader(SignConstants.X_PAY_NONCE, nonce)
-                .addHeader(SignConstants.X_PAY_SIGN, sign)
+                .addHeader(SignConstants.X_PAY_SIGN, sign+"1111")
+//                .addHeader(SignConstants.X_PAY_SIGN, sign)
                 .build();
         return chain.proceed(signed);
     }
