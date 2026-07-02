@@ -55,6 +55,11 @@
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
         </dependency>
+        <!-- OkHttp: PaySignInterceptor 依赖（原通过 shenyu-disruptor 传递，显式声明以保证签名工具稳定可用） -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+        </dependency>
         
         <dependency>
             <groupId>org.slf4j</groupId>

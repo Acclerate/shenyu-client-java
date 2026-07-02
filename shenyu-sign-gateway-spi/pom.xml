@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ 网关侧 RSA 验签 SPI 工程。
+  ~ 实现 ShenYu 2.6.1 的 SignService 接口，用业务系统公钥验签入站请求的 X-Pay-Sign。
+  ~ 打成 jar 放到 shenyu-bootstrap/ext-lib/，通过 JVM 启动 classpath 加载，
+  ~ Spring 启动期扫描到 @Bean SignService，触发 @ConditionalOnMissingBean 替换默认 ComposableSignService。
+  -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.apache.shenyu</groupId>
+    <artifactId>shenyu-sign-gateway-spi</artifactId>
+    <version>2.6.1</version>
+    <packaging>jar</packaging>
+    <name>shenyu-sign-gateway-spi</name>
+
+    <properties>
+        <java.version>1.8</java.version>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <shenyu.version>2.6.1</shenyu.version>
+        <spring.version>5.3.31</spring.version>
+    </properties>
+
+    <dependencies>
+        <!-- ShenYu sign 插件 API（provided，由 bootstrap 容器提供） -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-plugin-sign</artifactId>
+            <version>${shenyu.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- Spring WebFlux（provided，由 bootstrap 容器提供） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+            <version>${spring.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>${spring.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 打成普通 jar（不含依赖），放 ext-lib -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

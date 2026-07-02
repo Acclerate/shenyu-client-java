@@ -1,0 +1,50 @@
+server:
+  port: 8392
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: shenyu-sign-demo-pay
+  main:
+    allow-bean-definition-overriding: true
+
+# ShenYu 客户端注册（参考 shenyu-http-demo，已验证可注册到 2.6.1）
+shenyu:
+  register:
+    registerType: http
+    serverLists: http://localhost:9096
+    props:
+      username: admin
+      password: 1qaz!QAZ
+  client:
+    http:
+      props:
+        appName: sign-demo-pay
+        contextPath: /pay-demo
+        host: 10.19.236.150
+        port: 8392
+        isFull: false
+
+# PAY 侧签名配置：只持有 2 个密钥
+pay:
+  sign:
+    # 支付服务私钥（加签响应/回调）
+    pay-private-key: classpath:keys/pay-private-key.pem
+    # 业务系统公钥（验签入站请求）
+    biz-public-key: classpath:keys/biz-public-key.pem
+    # 时间戳防重放允许偏差（秒）
+    timestamp-tolerance-seconds: 300
+    # 业务系统回调接收地址（PAY 直连 BIZ，不经网关）
+    biz-callback-url: http://localhost:8391/biz/callback
+    # 阶段3：关闭 PAY 侧验签（信任网关 SignPlugin 已验签）
+    #   阶段1直连时改为 true（PAY 是唯一验签方）
+    sign-verify-enabled: false
+
+logging:
+  level:
+    org.apache.shenyu.client.core.sign: DEBUG
+    org.apache.shenyu.demo.sign.pay: INFO
+    org.apache.shenyu: INFO

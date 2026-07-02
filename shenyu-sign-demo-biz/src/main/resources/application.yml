@@ -1,0 +1,31 @@
+server:
+  port: 8391
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: shenyu-sign-demo-biz
+
+# BIZ 侧签名配置：只持有 2 个密钥
+pay:
+  sign:
+    # 业务系统私钥（加签出站请求）
+    biz-private-key: classpath:keys/biz-private-key.pem
+    # 支付服务公钥（验签响应/回调）
+    pay-public-key: classpath:keys/pay-public-key.pem
+    # 时间戳防重放允许偏差（秒）
+    timestamp-tolerance-seconds: 300
+    # 支付服务基础地址
+    #   阶段1直连：http://localhost:8392
+    #   阶段2/3经网关：http://localhost:9196/pay-demo
+    pay-base-url: http://localhost:9196/pay-demo
+    # 业务系统回调接收地址（PAY 直连 BIZ，不经网关）
+    biz-callback-url: http://localhost:8391/biz/callback
+
+logging:
+  level:
+    org.apache.shenyu.demo.sign.biz.security: DEBUG
+    org.apache.shenyu.demo.sign.biz: INFO

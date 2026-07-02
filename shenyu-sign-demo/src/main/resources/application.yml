@@ -1,0 +1,31 @@
+server:
+  port: 8390
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: shenyu-sign-demo
+
+# 支付加签验签 Demo 配置
+pay:
+  sign:
+    # 业务系统密钥（BIZ）：私钥用于对出站请求加签，公钥由支付服务持有用于验签入站请求
+    biz-private-key: classpath:keys/biz-private-key.pem
+    biz-public-key: classpath:keys/biz-public-key.pem
+    # 支付服务密钥（PAY）：私钥用于对响应/回调加签，公钥由业务系统持有用于验签
+    pay-private-key: classpath:keys/pay-private-key.pem
+    pay-public-key: classpath:keys/pay-public-key.pem
+    # 时间戳防重放允许偏差（秒）
+    timestamp-tolerance-seconds: 300
+    # 支付服务自身地址（Demo 同进程，用于 BIZ→PAY 调用）
+    pay-base-url: http://localhost:8390
+    # 业务系统回调接收地址（Demo 同进程）
+    biz-callback-url: http://localhost:8390/biz/callback
+
+logging:
+  level:
+    org.apache.shenyu.client.core.sign: DEBUG
+    org.apache.shenyu.demo.sign: INFO

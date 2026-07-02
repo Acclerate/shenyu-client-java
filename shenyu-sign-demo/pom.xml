@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Licensed to the Apache Software Foundation (ASF) under one or more
+  ~ contributor license agreements.  See the NOTICE file distributed with
+  ~ this work for additional information regarding copyright ownership.
+  ~ The ASF licenses this file to You under the Apache License, Version 2.0
+  ~ (the "License"); you may not use this file except in compliance with
+  ~ the License.  You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        sign-demo：支付加签验签本地闭环 Demo。
+        不纳入根 reactor 构建（与 shenyu-http-demo 一致），本地独立运行。
+        单进程承载 BIZ（业务系统）+ PAY（支付服务）双角色，演示：
+          1. 请求加签 + 请求验签（BIZ 私钥加签 → PAY 用 BIZ 公钥验签）
+          2. 响应加签 + 响应验签（PAY 私钥加签 → BIZ 用 PAY 公钥验签）
+          3. 回调通知加签 + 回调验签（PAY 私钥加签 → BIZ 用 PAY 公钥验签）
+    -->
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>org.apache.shenyu</groupId>
+    <artifactId>shenyu-sign-demo</artifactId>
+    <version>2.7.0.1-jdk8-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>shenyu-sign-demo</name>
+
+    <properties>
+        <java.version>1.8</java.version>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!-- 复用 shenyu-client-core 的签名工具（SignConstants/PemUtils/SignStringBuilder/RsaSigner/PaySignInterceptor/PaySignVerifier） -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-client-core</artifactId>
+            <version>${project.version}</version>
+            <exclusions>
+                <!-- Demo 无需注册能力，排除注册相关传递依赖以保持精简 -->
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-disruptor</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-spi</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-registry-api</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
