@@ -233,6 +233,75 @@ payRsa=org.apache.shenyu.plugin.sign.custom.PayRsaSignService
 
 ShenYu 原生从 `ShenYu-Authorization`(v2) 或 `appKey/sign/version`(v1) 头取参。本套协议用 `X-Pay-*` 头，需确保 SignPlugin 读取头时映射到 `X-Pay-Timestamp` / `X-Pay-Nonce` / `X-Pay-Sign`（修改 `SignPlugin` 的头提取逻辑，或在 RequestPlugin 中提前把 `X-Pay-*` 改写为原生头名）。
 
+### 4.4 SPI 请求流量时序图
+
+下图描述实际 jar（`shenyu-sign-gateway-spi-2.6.1.jar`）在网关中的运行期行为：启动期 SPI 装配 → 请求验签（成功 / 失败两条分支）→ 验签失败返回真实 HTTP 401。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant BIZ as "业务系统(加签方)"
+    participant GW as "ShenYu 网关插件链"
+    participant SPI as "PayRsaSignService(本SPI)"
+    participant KP as "DynamicBizPublicKeyProvider"
+    participant SRC as "密钥源 Redis/classpath"
+    participant PAY as "支付服务"
+
+    Note over GW,SPI: 【启动期·一次性】SPI jar 入 ext-lib 上 classpath<br/>spring.factories 注册 PayRsaSignConfiguration<br/>@Bean SignService 借 @ConditionalOnMissingBean 覆盖默认 ComposableSignService
+
+    BIZ->>BIZ: 业务私钥按 5 行格式加签
+    BIZ->>GW: POST /ctx/v3/pay/** + X-Pay-Timestamp/Nonce/Sign
+
+    Note over GW: SignPlugin(order=50) 先于 ContextPathPlugin(150)<br/>此时 path 仍含 contextPath，与加签串一致
+
+    GW->>SPI: signatureVerify(exchange, body)
+    SPI->>SPI: 读取 X-Pay-Timestamp/Nonce/Sign
+
+    alt 缺头 / 时间戳非法 / 超过 ±300s
+        SPI->>GW: fail401: setStatusCode(401)+VerifyResult.fail
+        GW-->>BIZ: HTTP 401 + body {"code":401,...}
+    else 头与时间戳合法
+        SPI->>SPI: 构造 5 行待签名串<br/>method\n url\n ts\n nonce\n body\n
+        SPI->>KP: currentKey()
+        alt 缓存命中(TTL≤30s)
+            KP-->>SPI: 返回缓存公钥
+        else 过期/未命中
+            KP->>SRC: readPem(): Redis GET → 失败转 classpath PEM
+            SRC-->>KP: PEM 文本
+            KP->>KP: parsePem + 单飞锁刷新缓存
+            KP-->>SPI: 返回公钥
+        end
+        SPI->>SPI: SHA256withRSA.verify(signString, sig)
+        alt 验签通过
+            SPI->>GW: VerifyResult.success()
+            GW->>PAY: RequestPlugin→ContextPath 剥离→Divide 转发
+            PAY-->>GW: 响应(可选)
+            GW-->>BIZ: HTTP 200
+        else 验签失败 / 抛异常
+            SPI->>GW: fail401: setStatusCode(401)+VerifyResult.fail
+            GW-->>BIZ: HTTP 401 + body {"code":401,...}
+        end
+    end
+```
+
+> 图中三个关键节点：
+> - **① 启动期覆盖**：靠 `spring.factories` + `@ConditionalOnMissingBean(search=ALL)`，无需 `META-INF/shenyu/` SPI 文件。
+> - **② 插件顺序**：`SignPlugin(50) < ContextPathPlugin(150)`，故 SPI 读到的 path 仍含 contextPath，与客户端加签串逐字节一致。
+> - **③ 真实 401**：`fail401()` 在返回 `VerifyResult.fail` 前先 `setStatusCode(401)`，早于 `WebFluxResultUtils.result()` 写 body；后者不覆盖状态码，401 得以保留。
+
+### 4.5 设计逻辑要点
+
+| # | 要点 | 说明 |
+|---|------|------|
+| 1 | **SPI 覆盖机制** | `META-INF/spring.factories` 注册 `PayRsaSignConfiguration`；其 `@Bean SignService` 与 ShenYu 原生 `SignPluginConfiguration` 的 `@ConditionalOnMissingBean(SignService.class, search=ALL)` 配合，让默认 `ComposableSignService` 让位，本 SPI 自动接管验签。 |
+| 2 | **插件顺序是隐含契约** | `SignPlugin(order=50)` 早于 `ContextPathPlugin(150)`，SPI 读到的 `exchange.getRequest().getURI().getPath()` 仍含 contextPath（如 `/pay-demo/v3/pay/...`），与客户端加签时的 url 完全一致——这是验签成立的隐含前提，**切勿改插件顺序**。 |
+| 3 | **5 行待签名串** | `method\n url\n ts\n nonce\n body\n`，其中 `url = path [+ "?" + query]`、GET 的 `body` 为空串。与客户端 `SignStringBuilder.buildRequestSignString` 严格对称。 |
+| 4 | **真实 HTTP 401** | `fail401(exchange, reason)` 先 `exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED)` 再 `return VerifyResult.fail(reason)`。状态码在 `SignPlugin` 写 body 之前已设定，`WebFluxResultUtils.result()` 不覆盖状态码，故 401 保留。**5 个失败出口**（缺头 / 时间戳非法 / 过期 / 验签失败 / 抛异常）统一走 `fail401`。 |
+| 5 | **公钥三级降级** | 主源 Redis（`GET shenyu:sign:biz-public-key.pem`）→ 兜底 classpath `biz-public-key.pem` → 旧缓存 stale 续命（`allow-stale-on-refresh-failure=true`）。Redis 故障**不阻断网关启动**（构造器吞连接异常），后台 `gw-sign-redis-reconnect` 守护线程每 60s 重连，恢复后清空缓存强制读新值。 |
+| 6 | **单飞缓存防惊群** | `ReentrantLock.tryLock()`：缓存失效时仅一个线程执行 `refresh()`，其余线程读旧值；无旧值时阻塞并 double-check。缓存 TTL 默认 30s，故障窗口 3s 短 TTL 重试。 |
+| 7 | **防重放窗口** | `TIMESTAMP_TOLERANCE_SECONDS = 300`（±5 分钟），与本仓库 `PaySignVerifier.checkTimestamp` 对齐；超窗直接 `fail401`。 |
+| 8 | **body 单次消费** | WebFlux body 仅可读一次，SignPlugin 验签读 body 与 DividePlugin 转发读 body 冲突，需在 SignPlugin 之前启用 `CacheRequestBodyPlugin` 缓存请求体（详见 7.1）。 |
+
 ---
 
 ## 五、RequestPlugin 配置示例（Admin）
@@ -383,6 +452,144 @@ curl -X POST http://localhost:8390/v3/pay/notify-trigger
 
 网关验签失败返回真实 HTTP 401
 需要在 `PayRsaSignService` 里直接操作 `exchange` 的响应状态（但这绕过了` ShenYu `的标准错误返回机制，需谨慎）。标准做法是接受`「HTTP 200 + body code:401」`——这也是微信支付 V3、支付宝等主流支付网关的惯例（业务错误用 body code 区分，传输层保持 200，便于客户端统一解析）。
+源码链路已完全查清。下面是深度分析。
+
+## VerifyResult.fail() 如何变成 HTTP 200
+
+**一句话结论**：ShenYu 网关在验签失败时，**HTTP 状态码始终是 200**，`401` 只是塞进了响应 body 的 JSON 里作为业务码。根因在 `WebFluxResultUtils.result()` 方法**从不设置 HTTP 状态码**。
+
+### 完整调用链（5 步，逐行源码溯源）
+
+**第1步：你的 `PayRsaSignService` 返回失败**
+```java
+return VerifyResult.fail("sign verify failed");
+```
+
+**第2步：`SignPlugin.doExecute` 捕获失败，调 failedResult**
+```java
+// SignPlugin.java
+VerifyResult result = signService.signatureVerify(exchange, body);
+if (result.isFailed()) {
+    return WebFluxResultUtils.failedResult(
+        ShenyuResultEnum.SIGN_IS_NOT_PASS.getCode(),  // ← 401
+        result.getReason(),                             // ← "sign verify failed"
+        exchange);
+}
+```
+
+**第3步：`ShenyuResultEnum.SIGN_IS_NOT_PASS` 的 code=401**
+```java
+// ShenyuResultEnum.java（已查证源码）
+SIGN_IS_NOT_PASS(401, "Sign is not pass shenyu!"),
+```
+注意：这个 `401` 只是枚举字段值，**不是 `HttpStatus`**。
+
+**第4步：`WebFluxResultUtils.failedResult` 把 401 塞进错误体**
+```java
+// WebFluxResultUtils.java
+public static Mono failedResult(final int code, final String reason, final ServerWebExchange exchange) {
+    Object error = ShenyuResultWrap.error(exchange, code, reason, null); // code=401 进了 error 对象
+    return WebFluxResultUtils.result(exchange, error);                   // 写响应
+}
+```
+`ShenyuResultWrap.error()` 构造的对象形如 `{code: 401, message: "sign verify failed", data: null}`——`401` 成了 JSON 字段值。
+
+**第5步：`WebFluxResultUtils.result` 写响应——这就是 200 的根源**
+```java
+// WebFluxResultUtils.java（关键方法）
+public static Mono result(final ServerWebExchange exchange, final Object result) {
+    final ShenyuResult shenyuResult = ShenyuResultWrap.shenyuResult();
+    Object resultData = shenyuResult.format(exchange, result);
+    MediaType mediaType = MediaType.TEXT_PLAIN; // 或 JSON
+    exchange.getResponse().getHeaders().setContentType(mediaType);     // ① 只设了 Content-Type
+    final Object responseData = shenyuResult.result(exchange, resultData);
+    byte[] bytes = ... responseData.toString() ...;
+    return exchange.getResponse().writeWith(Mono.just(                  // ③ 写 body
+            exchange.getResponse().bufferFactory().wrap(bytes))
+            .doOnNext(data -> exchange.getResponse().getHeaders()
+                    .setContentLength(data.readableByteCount())));      // ② 只设了 Content-Length
+}
+```
+
+**关键发现**：整个 `result()` 方法里**没有任何一行调用 `setStatusCode()`**。它只做了三件事：设 `Content-Type` → 设 `Content-Length` → `writeWith(body)`。
+
+Spring WebFlux 的 `ServerHttpResponse` 默认状态码是 `200 OK`，只要不显式 `setStatusCode()`，响应就是 200。
+
+### 最终 HTTP 响应（验签失败时）
+
+```http
+HTTP/1.1 200 OK                                          ← HTTP 状态码：200（默认）
+Content-Type: application/json
+Content-Length: 56
+
+{"code":401,"message":"sign verify failed","data":null}   ← 401 只是 body 里的业务码
+```
+
+### 这是 ShenYu 的设计哲学
+
+ShenYu 是「网关」，它把所有结果（含错误）都统一成业务码形式放在 body 里返回，**HTTP 层保持 200**（只有少数硬性错误会用真实 HTTP 状态码，比如：
+- `REQUEST_HEADER_TOO_LARGE` → 用 `setStatusCode(431)` 
+- `REQUEST_ENTITY_TOO_LARGE` → 用 `setStatusCode(413)`
+- 这两个在 divide 插件里有专门的 `setStatusCode` 调用
+
+但 **SignPlugin 验签失败不在其列**，走的是「HTTP 200 + body 业务码」路径。
+
+### 与 PAY 侧验签失败的对比（你之前遇到的）
+
+| 场景 | 机制 | HTTP 状态码 | body |
+|------|------|------------|------|
+| **网关 SignPlugin 验签失败** | `WebFluxResultUtils.result()` 不设 status | **200** | `{"code":401,"message":"sign verify failed"}` |
+| **PAY 侧验签失败**（`PayController` 第78行） | `ResponseEntity.status(401)` 显式设 | **401** | `{"code":"SIGN_ERROR","message":"..."}` |
+
+两者机制完全不同——PAY 用的是 Spring MVC 的 `ResponseEntity.status(401)` 真改了 HTTP 状态码；网关 SignPlugin 用的是 ShenYu 的 `WebFluxResultUtils`，不改状态码只写 body。
+
+### 如果你希望网关验签失败返回真实 HTTP 401
+
+需要在 `PayRsaSignService` 里直接操作 exchange 的响应状态（但这绕过了 ShenYu 的标准错误返回机制，需谨慎）。标准做法是接受「HTTP 200 + body code:401」——这也是微信支付 V3、支付宝等主流支付网关的惯例（业务错误用 body code 区分，传输层保持 200，便于客户端统一解析）。
+
+## 实现：网关验签失败返回真实 HTTP 401
+
+### 实现方式
+
+在 `PayRsaSignService` 里封装了 `fail401(exchange, reason)` 辅助方法，所有验签失败出口统一调用：
+```java
+private VerifyResult fail401(final ServerWebExchange exchange, final String reason) {
+    exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+    return VerifyResult.fail(reason);
+}
+```
+
+### 原理（为什么这样能生效）
+
+```
+PayRsaSignService.signatureVerify()
+    └─ 验签失败 → fail401(exchange, reason)
+         ├─ exchange.getResponse().setStatusCode(401)   ← 此刻 response 未 committed
+         └─ return VerifyResult.fail(reason)
+              ↓
+SignPlugin.doExecute() 检测 isFailed()
+    └─ WebFluxResultUtils.failedResult(401, reason, exchange)
+         └─ WebFluxResultUtils.result(exchange, error)
+              └─ exchange.getResponse().writeWith(body)   ← writeWith 沿用已设的 401
+```
+
+关键时序：`setStatusCode(401)` 发生在 `SignService` 返回前，**早于** `WebFluxResultUtils.result()` 写 body。Spring WebFlux 的 `writeWith` 会使用 response 上已设置的状态码（401），而 `WebFluxResultUtils.result()` 本身不覆盖状态码，所以 401 得以保留。
+
+### 改动前后对比（实测）
+
+| 请求 | 改动前 | 改动后 |
+|------|--------|--------|
+| 无签名头 POST 网关 | `HTTP/1.1 200 OK` + body `{"code":401,...}` | **`HTTP/1.1 401 Unauthorized`** + body `{"code":401,...}` |
+| 正常带签名请求 | `HTTP/1.1 200` | `HTTP/1.1 200`（不受影响）|
+
+### 涉及的 4 个失败出口（全部已改为真实 401）
+1. 缺少签名头（`missing X-Pay-* header`）
+2. 时间戳格式错误（`invalid timestamp format`）
+3. 时间戳过期（`timestamp expired`）
+4. 签名校验失败（`sign verify failed`）+ 验签异常（`verify error`）
+
+网关现已部署新版 jar，BIZ/PAY 无需改动即可生效。后续任何验签失败的请求，网关都会直接返回真实 HTTP 401，客户端可用 HTTP 状态码做传输层错误判断，同时 body 里的 `code:401` 仍保留供业务层使用。
+
 
 ```bash
 {
@@ -401,6 +608,29 @@ curl -X POST http://localhost:8390/v3/pay/notify-trigger
         "nonce": "cecb5b33440148c4a73b3422e62958d2",
         "url": "/pay-demo/v3/pay/transactions/jsapi",
         "timestamp": "1782954807"
+    }
+}
+
+```
+
+
+```bash
+{
+    "步骤3_BIZ响应验签结果": "失败",
+    "步骤2_PAY响应体": "{\"code\":401,\"message\":\"verify error: Input byte array has incorrect ending byte at 344\"}",
+    "步骤2_PAY处理并加签响应_httpCode": 401,
+    "步骤1_请求体": "{\"appid\":\"wxd678efh567hg6787\",\"mchid\":\"1900007291\",\"description\":\"Image形象店-深圳腾大-QQ公仔\",\"out_trade_no\":\"1217752501201407033233368018\",\"amount\":{\"total\":100,\"currency\":\"CNY\"}}",
+    "目标URL": "http://localhost:9196/pay-demo/v3/pay/transactions/jsapi",
+    "步骤2_响应签名头": "无(验签失败或非加签响应)",
+    "步骤1_BIZ加签全过程_私钥加密": {
+        "算法": "SHA256withRSA（业务私钥加密）",
+        "待签名串_5行_换行替换": "POST↩/pay-demo/v3/pay/transactions/jsapi↩1782954970↩5b10eb9f2c524f0f92e0c5b2f2c62b99↩{\"appid\":\"wxd678efh567hg6787\",\"mchid\":\"1900007291\",\"description\":\"Image形象店-深圳腾大-QQ公仔\",\"out_trade_no\":\"1217752501201407033233368018\",\"amount\":{\"total\":100,\"currency\":\"CNY\"}}↩",
+        "method": "POST",
+        "签名值_sign": "uJcSgY0KNwygye64+PsnvHVMahFnXKA/Zw9RZxhb3WO1/+SyQZDR7+tx+lsWdpZ4nbeH1Bj1oG23BqxE6AVMx5IjqVDanb0UKhxFbMQvxx+G0/eFfw6ztIrBBOtGthiIm9JP4rQiM0DdgAJ5GWzAwKvEeMKNVcw3yPbJLnzrxOW2ceHHjo8RBz9+BMCKZ2Hg77JMwMA7ISexmqkDtxB/5Q5JV50UpM5LyzOSQyC0t6wUocaCCrP2f3qYh0pnbFqs637Kf0qS7ARejslo73pOJ+sCVJQgYWL5hEMTSOL9cuR9A2S+FNXnAyHjf6ajyh5iPMMU+Th96hXzGum9UamyEw==",
+        "注入请求头": "X-Pay-Timestamp / X-Pay-Nonce / X-Pay-Sign",
+        "nonce": "5b10eb9f2c524f0f92e0c5b2f2c62b99",
+        "url": "/pay-demo/v3/pay/transactions/jsapi",
+        "timestamp": "1782954970"
     }
 }
 

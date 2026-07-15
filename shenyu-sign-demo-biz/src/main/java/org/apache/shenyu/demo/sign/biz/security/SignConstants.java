@@ -48,6 +48,11 @@ public final class SignConstants {
     public static final String X_PAY_SIGN = "X-Pay-Sign";
 
     /**
+     * HTTP 头：应用标识（多租户场景下网关据此从 Redis 获取对应公钥）.
+     */
+    public static final String X_PAY_APP_KEY = "X-Pay-App-Key";
+
+    /**
      * 签名算法 SHA256 with RSA，JDK8 原生 {@code Signature.getInstance("SHA256withRSA")} 即可支持.
      */
     public static final String SHA256_WITH_RSA = "SHA256withRSA";

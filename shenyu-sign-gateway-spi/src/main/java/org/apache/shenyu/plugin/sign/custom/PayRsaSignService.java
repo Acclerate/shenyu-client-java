@@ -12,15 +12,14 @@ import org.apache.shenyu.plugin.sign.api.VerifyResult;
 import org.apache.shenyu.plugin.sign.service.SignService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.server.ServerWebExchange;
 
 import java.nio.charset.StandardCharsets;
-import java.security.PublicKey;
 import java.security.Signature;
 import java.time.Instant;
 import java.util.Base64;
-import org.springframework.http.HttpStatus;
 
 /**
  * PayRsaSignService.
@@ -49,17 +48,19 @@ public class PayRsaSignService implements SignService {
 
     private static final String X_PAY_SIGN = "X-Pay-Sign";
 
-    private static final long TIMESTAMP_TOLERANCE_SECONDS = 300L;
+    private static final String X_PAY_APP_KEY = "X-Pay-App-Key";
 
-    private final PublicKey bizPublicKey;
+    private static final long   TIMESTAMP_TOLERANCE_SECONDS = 300L;
+
+    private final BizPublicKeyProvider bizPublicKeyProvider;
 
     /**
      * 构造函数，注入业务系统公钥。
      *
-     * @param bizPublicKey 业务系统公钥（验签入站请求）
+     * @param bizPublicKeyProvider 业务系统公钥提供器（支持 Redis 动态轮换 + 本地缓存）
      */
-    public PayRsaSignService(final PublicKey bizPublicKey) {
-        this.bizPublicKey = bizPublicKey;
+    public PayRsaSignService(final BizPublicKeyProvider bizPublicKeyProvider) {
+        this.bizPublicKeyProvider = bizPublicKeyProvider;
     }
 
     @Override
@@ -69,11 +70,16 @@ public class PayRsaSignService implements SignService {
             String timestamp = request.getHeaders().getFirst(X_PAY_TIMESTAMP);
             String nonce = request.getHeaders().getFirst(X_PAY_NONCE);
             String sign = request.getHeaders().getFirst(X_PAY_SIGN);
+            String appKey = request.getHeaders().getFirst(X_PAY_APP_KEY);
 
             if (timestamp == null || nonce == null || sign == null) {
                 LOG.warn("[GW-Sign] 缺少签名头 ts={} nonce={} sign={}",
                         timestamp != null, nonce != null, sign != null);
                 return fail401(exchange, "missing X-Pay-* header");
+            }
+            if (appKey == null || appKey.trim().isEmpty()) {
+                LOG.warn("[GW-Sign] 缺少 X-Pay-App-Key 头");
+                return fail401(exchange, "missing X-Pay-App-Key header");
             }
 
             // 时间戳防重放（±300s）
@@ -101,24 +107,24 @@ public class PayRsaSignService implements SignService {
             // 5 行签名串：method\nurl\nts\nnonce\nbody\n
             String signString = method + "\n" + url + "\n" + timestamp + "\n"
                     + nonce + "\n" + body + "\n";
-            LOG.info("[GW-Sign] 验签输入 | method={} url={} ts={} nonce={} bodyLen={} bodyPreview={}",
-                    method, url, timestamp, nonce, body.length(),
+            LOG.info("[GW-Sign] 验签输入 | appKey={} method={} url={} ts={} nonce={} bodyLen={} bodyPreview={}",
+                    appKey, method, url, timestamp, nonce, body.length(),
                     body.length() > 100 ? body.substring(0, 100) + "..." : body);
             LOG.info("[GW-Sign] 待验签名串(5行)={}", signString.replace("\n", "↩"));
             LOG.info("[GW-Sign] 待验签sign={}", sign);
 
-            // SHA256withRSA 验签
+            // SHA256withRSA 验签（根据 appKey 从 Redis 获取对应公钥）
             byte[] sig = Base64.getDecoder().decode(sign);
             Signature verifier = Signature.getInstance("SHA256withRSA");
-            verifier.initVerify(bizPublicKey);
+            verifier.initVerify(bizPublicKeyProvider.currentKey(appKey));
             verifier.update(signString.getBytes(StandardCharsets.UTF_8));
             boolean pass = verifier.verify(sig);
 
             if (pass) {
-                LOG.info("[GW-Sign] ✅ 验签通过（业务公钥 SHA256withRSA 校验成功）");
+                LOG.info("[GW-Sign] ✅ 验签通过 appKey={}（业务公钥 SHA256withRSA 校验成功）", appKey);
                 return VerifyResult.success();
             } else {
-                LOG.warn("[GW-Sign] ❌ 验签失败（签名串与sign不匹配）");
+                LOG.warn("[GW-Sign] ❌ 验签失败 appKey={}（签名串与sign不匹配）", appKey);
                 return fail401(exchange, "sign verify failed");
             }
         } catch (Exception e) {

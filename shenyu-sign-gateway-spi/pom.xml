@@ -46,11 +46,18 @@
             <version>${spring.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- lettuce 由镜像提供（探查发现 apache/shenyu-bootstrap:2.6.1 内含 lettuce-core-6.1.10.RELEASE.jar） -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+            <version>6.3.2.RELEASE</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <!-- 打成普通 jar（不含依赖），放 ext-lib -->
+            <!-- SPI 主 jar -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>

@@ -61,13 +61,17 @@ public final class PaySignInterceptor implements Interceptor {
 
     private final PrivateKey bizPrivateKey;
 
+    private final String appKey;
+
     /**
      * 构造加签拦截器.
      *
      * @param bizPrivateKey 业务系统私钥（用于对出站请求加签）
+     * @param appKey        应用标识（注入 X-Pay-App-Key 头，网关据此从 Redis 获取对应公钥）
      */
-    public PaySignInterceptor(final PrivateKey bizPrivateKey) {
+    public PaySignInterceptor(final PrivateKey bizPrivateKey, final String appKey) {
         this.bizPrivateKey = bizPrivateKey;
+        this.appKey = appKey;
     }
 
     @Override
@@ -89,15 +93,15 @@ public final class PaySignInterceptor implements Interceptor {
         LOG.info("[BIZ-Sign] 请求加签 | 算法=SHA256withRSA 私钥={} method={} url={}", keyId(bizPrivateKey), method, url);
         LOG.info("[BIZ-Sign] 签名串(5行)={}", replaceNewline(signString));
         LOG.info("[BIZ-Sign] 签名值={}", sign);
-        LOG.info("[BIZ-Sign] 注入头 X-Pay-Timestamp={} X-Pay-Nonce={} X-Pay-Sign=<{}字符>", timestamp, nonce, sign.length());
+        LOG.info("[BIZ-Sign] 注入头 X-Pay-Timestamp={} X-Pay-Nonce={} X-Pay-Sign=<{}字符> X-Pay-App-Key={}", timestamp, nonce, sign.length(), appKey);
 
         LAST_SIGN.set(new SignContext(method, url, timestamp, nonce, sign, signString));
 
         Request signed = original.newBuilder()
                 .addHeader(SignConstants.X_PAY_TIMESTAMP, timestamp)
                 .addHeader(SignConstants.X_PAY_NONCE, nonce)
-                .addHeader(SignConstants.X_PAY_SIGN, sign+"1111")
-//                .addHeader(SignConstants.X_PAY_SIGN, sign)
+                .addHeader(SignConstants.X_PAY_SIGN, sign)
+                .addHeader(SignConstants.X_PAY_APP_KEY, appKey)
                 .build();
         return chain.proceed(signed);
     }

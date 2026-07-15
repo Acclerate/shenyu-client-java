@@ -82,7 +82,7 @@ public class BizController {
             signDetail.put("nonce", sc.getNonce());
             signDetail.put("待签名串_5行_换行替换", sc.getSignString().replace("\n", "↩"));
             signDetail.put("签名值_sign", sc.getSign());
-            signDetail.put("注入请求头", "X-Pay-Timestamp / X-Pay-Nonce / X-Pay-Sign");
+            signDetail.put("注入请求头", "X-Pay-Timestamp / X-Pay-Nonce / X-Pay-Sign / X-Pay-App-Key");
         }
         result.put("步骤1_BIZ加签全过程_私钥加密", signDetail);
         result.put("步骤1_请求体", body);

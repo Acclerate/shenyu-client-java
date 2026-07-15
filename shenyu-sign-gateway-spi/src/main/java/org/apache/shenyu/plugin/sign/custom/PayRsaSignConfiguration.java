@@ -8,25 +8,18 @@
  */
 package org.apache.shenyu.plugin.sign.custom;
 
+import org.apache.shenyu.plugin.sign.service.SignService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.apache.shenyu.plugin.sign.service.SignService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ClassPathResource;
-
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.security.KeyFactory;
-import java.security.PublicKey;
-import java.security.spec.X509EncodedKeySpec;
-import java.util.Base64;
+import org.springframework.core.env.Environment;
 
 /**
  * PayRsaSignConfiguration.
  *
  * <p>注册 {@link PayRsaSignService} 为 Spring Bean，替代默认的 ComposableSignService。
- * 业务系统公钥从 classpath:biz-public-key.pem 加载。
+ * 支持公钥从 classpath 或 Redis 读取（用于密钥轮换）。
  */
 @Configuration
 public class PayRsaSignConfiguration {
@@ -34,48 +27,74 @@ public class PayRsaSignConfiguration {
     private static final Logger LOG = LoggerFactory.getLogger(PayRsaSignConfiguration.class);
 
     /**
+     * 业务公钥提供器。
+     */
+    @Bean
+    public DynamicBizPublicKeyProvider bizPublicKeyProvider(final Environment env) {
+        String source = getString(env, "gw.sign.key-source", "classpath");
+        String classpathLocation = getString(env, "gw.sign.classpath-public-key", "biz-public-key.pem");
+        String redisHost = getString(env, "gw.sign.redis.host", "127.0.0.1");
+        int redisPort = getInt(env, "gw.sign.redis.port", 6379);
+        String redisPassword = getString(env, "gw.sign.redis.password", "");
+        int redisDatabase = getInt(env, "gw.sign.redis.database", 0);
+        long redisTimeoutMs = getLong(env, "gw.sign.redis.timeout-ms", 1500L);
+        String redisKeyPattern = getString(env, "gw.sign.redis.biz-public-key-pattern", "shenyu:sign:%s:biz-public-key.pem");
+        long cacheTtlSeconds = getLong(env, "gw.sign.cache.ttl-seconds", 30L);
+        long retrySeconds = getLong(env, "gw.sign.cache.failure-retry-seconds", 3L);
+        boolean allowStale = getBoolean(env, "gw.sign.cache.allow-stale-on-refresh-failure", true);
+        return new DynamicBizPublicKeyProvider(
+                source, classpathLocation,
+                redisHost, redisPort, redisPassword, redisDatabase, redisTimeoutMs,
+                redisKeyPattern, cacheTtlSeconds, retrySeconds, allowStale
+        );
+    }
+
+    /**
      * 自定义 SignService Bean。
      *
      * <p>此 Bean 注册后，SignPluginConfiguration 的默认 @Bean signService() 因
      * @ConditionalOnMissingBean(SignService.class) 而被跳过。
-     *
-     * @return PayRsaSignService 实例
-     * @throws Exception 公钥加载失败
      */
     @Bean
-    public SignService signService() throws Exception {
-        PublicKey bizPublicKey = loadPublicKeyFromPem("biz-public-key.pem");
+    public SignService signService(final DynamicBizPublicKeyProvider bizPublicKeyProvider) {
         LOG.info("[GW-Sign] PayRsaSignService 已注册，替换默认 ComposableSignService");
-        LOG.info("[GW-Sign] 业务公钥已加载，将用于验签入站请求的 X-Pay-Sign");
-        return new PayRsaSignService(bizPublicKey);
+        return new PayRsaSignService(bizPublicKeyProvider);
     }
 
-    /**
-     * 从 classpath 加载 X.509 PEM 公钥。
-     * 不依赖 shenyu-client-core 的 PemUtils（网关侧可能没有该依赖），自行实现。
-     *
-     * @param classpathLocation classpath 路径
-     * @return PublicKey
-     * @throws Exception 加载失败
-     */
-    private PublicKey loadPublicKeyFromPem(final String classpathLocation) throws Exception {
-        ClassPathResource resource = new ClassPathResource(classpathLocation);
-        try (InputStream in = resource.getInputStream()) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buf = new byte[4096];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                out.write(buf, 0, n);
-            }
-            String pem = new String(out.toByteArray(), "UTF-8");
-            // 去掉 PEM 头尾标记和换行
-            String base64 = pem
-                    .replace("-----BEGIN PUBLIC KEY-----", "")
-                    .replace("-----END PUBLIC KEY-----", "")
-                    .replaceAll("\\s", "");
-            byte[] der = Base64.getDecoder().decode(base64);
-            X509EncodedKeySpec spec = new X509EncodedKeySpec(der);
-            return KeyFactory.getInstance("RSA").generatePublic(spec);
+    private String getString(final Environment env, final String key, final String defaultValue) {
+        String value = env.getProperty(key);
+        return value == null ? defaultValue : value.trim();
+    }
+
+    private int getInt(final Environment env, final String key, final int defaultValue) {
+        String value = env.getProperty(key);
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
         }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    private long getLong(final Environment env, final String key, final long defaultValue) {
+        String value = env.getProperty(key);
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    private boolean getBoolean(final Environment env, final String key, final boolean defaultValue) {
+        String value = env.getProperty(key);
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(value.trim());
     }
 }

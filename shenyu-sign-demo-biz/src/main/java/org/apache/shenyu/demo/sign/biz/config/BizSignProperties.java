@@ -41,6 +41,11 @@ public class BizSignProperties {
      */
     private String bizCallbackUrl;
 
+    /**
+     * 应用标识（多租户场景下网关据此从 Redis 获取对应公钥）。
+     */
+    private String appKey = "biz001";
+
     public String getBizPrivateKey() {
         return bizPrivateKey;
     }
@@ -79,5 +84,13 @@ public class BizSignProperties {
 
     public void setBizCallbackUrl(final String bizCallbackUrl) {
         this.bizCallbackUrl = bizCallbackUrl;
+    }
+
+    public String getAppKey() {
+        return appKey;
+    }
+
+    public void setAppKey(final String appKey) {
+        this.appKey = appKey;
     }
 }

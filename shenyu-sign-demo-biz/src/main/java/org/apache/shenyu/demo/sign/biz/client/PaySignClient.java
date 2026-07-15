@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.apache.shenyu.demo.sign.biz.config.BizSignProperties;
 import org.apache.shenyu.demo.sign.biz.security.PaySignInterceptor;
 import org.apache.shenyu.demo.sign.biz.security.PaySignVerifier;
 import org.slf4j.Logger;
@@ -42,9 +43,10 @@ public class PaySignClient {
     private final PublicKey payPublicKey;
 
     public PaySignClient(@Qualifier("bizPrivateKey") final PrivateKey bizPrivateKey,
-                         @Qualifier("payPublicKey") final PublicKey payPublicKey) {
+                         @Qualifier("payPublicKey") final PublicKey payPublicKey,
+                         final BizSignProperties bizSignProperties) {
         this.httpClient = new OkHttpClient.Builder()
-                .addInterceptor(new PaySignInterceptor(bizPrivateKey))
+                .addInterceptor(new PaySignInterceptor(bizPrivateKey, bizSignProperties.getAppKey()))
                 .build();
         this.payPublicKey = payPublicKey;
     }
