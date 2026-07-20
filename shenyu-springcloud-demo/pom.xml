@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Licensed to the Apache Software Foundation (ASF) under one or more
+  ~ contributor license agreements.  See the NOTICE file distributed with
+  ~ this work for additional information regarding copyright ownership.
+  ~ The ASF licenses this file to You under the Apache License, Version 2.0
+  ~ (the "License"); you may not use this file except in compliance with
+  ~ the License.  You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
+<!--
+  Spring Cloud 微服务 demo：注册到 Nacos 2.5.1，经 ShenYu 2.6.1 网关 springCloud 插件路由。
+
+  依赖策略（与 shenyu 2.6.1 默认完全对齐）：
+    - shenyu-spring-boot-starter-client-springcloud:2.6.1            → 业务侧注册 SDK（HTTP 推 admin 元数据）
+    - spring-cloud-starter-alibaba-nacos-discovery:2021.0.1.0        → 与 ShenYu 2.6.1 bootstrap pom 内置版本一致
+    - spring-cloud-commons:3.1.2                                     → 与 ShenYu 2.6.1 bootstrap pom 内置版本一致
+    - nacos-client:2.0.4                                             → 与 ShenYu 2.6.1 / shenyu-admin 镜像自带版本一致
+                                                                      (官方兼容规则：Nacos 2.x server 兼容所有 2.x client，
+                                                                       故 client 2.0.4 ↔ server 2.5.1 协议层兼容)
+    - spring-boot-starter-web                                        → 提供 /order/findById 等接口
+
+  不纳入根 reactor（与 shenyu-http-demo 一致），本地独立运行：mvn spring-boot:run
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>org.apache.shenyu.demo</groupId>
+    <artifactId>shenyu-springcloud-demo</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    <name>shenyu-springcloud-demo</name>
+    <description>Spring Cloud + ShenYu 2.6.1 springCloud plugin + Nacos 2.5.1 demo</description>
+
+    <properties>
+        <java.version>1.8</java.version>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- 与 apache/shenyu v2.6.1 tag 中 shenyu-bootstrap/pom.xml 锁定的版本完全一致 -->
+        <shenyu.version>2.6.1</shenyu.version>
+        <spring-cloud.version>3.1.2</spring-cloud.version>
+        <spring-cloud-alibaba.version>2021.0.1.0</spring-cloud-alibaba.version>
+        <nacos-client.version>2.0.4</nacos-client.version>
+    </properties>
+
+    <dependencies>
+        <!-- ============================================================= -->
+        <!-- 1) ShenYu SpringCloud client：HTTP 元数据注册到 admin         -->
+        <!--    提供组合注解 @ShenyuRequestMapping / @ShenyuGetMapping 等   -->
+        <!--    (meta-annotated with @ShenyuSpringCloudClient + @RequestMapping) -->
+        <!-- ============================================================= -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-spring-boot-starter-client-springcloud</artifactId>
+            <version>${shenyu.version}</version>
+        </dependency>
+
+        <!-- ============================================================= -->
+        <!-- 2) Spring Cloud Alibaba Nacos 服务发现：把本服务实例注册到 Nacos -->
+        <!--    shenyu-bootstrap 同样依赖此 starter，通过 NacosDiscoveryClient -->
+        <!--    拉取本服务的实例列表完成路由转发（springCloud 插件委托器路径）-->
+        <!-- ============================================================= -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+            <version>${spring-cloud-alibaba.version}</version>
+            <exclusions>
+                <!-- 显式排除并由下面的统一版本接管，避免与 ShenYu 内部版本错配 -->
+                <exclusion>
+                    <groupId>org.springframework.cloud</groupId>
+                    <artifactId>spring-cloud-context</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.springframework.cloud</groupId>
+                    <artifactId>spring-cloud-commons</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- 统一锁定的 spring-cloud-commons 版本（与 ShenYu 2.6.1 内置一致） -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-commons</artifactId>
+            <version>${spring-cloud.version}</version>
+        </dependency>
+
+        <!-- ============================================================= -->
+        <!-- 3) 显式锁定 nacos-client 版本（与 ShenYu 2.6.1 镜像内一致）    -->
+        <!--    官方规则：Nacos 2.x server 兼容所有 2.x client；2.0.4 ↔ 2.5.1 协议层兼容 -->
+        <!-- ============================================================= -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-client</artifactId>
+            <version>${nacos-client.version}</version>
+        </dependency>
+
+        <!-- ============================================================= -->
+        <!-- 4) Web 容器：暴露 /order/findById 等 REST 接口               -->
+        <!-- ============================================================= -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- 健康检查（actuator /health）便于排查启动问题 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>shenyu-springcloud-demo</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

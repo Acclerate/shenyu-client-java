@@ -33,9 +33,10 @@ spring:
   main:
     allow-bean-definition-overriding: true
 
-# === ShenYu client registration (HTTP) ===
+# === ShenYu client registration (HTTP) + Nacos service discovery ===
 shenyu:
   register:
+    # 元数据/API/URI 走 HTTP 推送到 admin（registerType 仅作 map key，本仓库 factory 硬编码 HttpClientRegisterRepository）
     registerType: http
     serverLists: http://localhost:9096
     props:
@@ -45,9 +46,27 @@ shenyu:
     http:
       props:
         appName: http-demo
-        contextPath: /http-demo11
-        host: 10.19.236.150
+        contextPath: /http-demo12
         isFull: false
+        # 网段通配符：锁定 10.19.236.x，避免 Windows 多虚拟网卡（VMnet8/vEthernet 等）选错 IP；
+        # IpUtils.getHost 会从匹配该 pattern 的 IPv4 里选一个。不写死完整 IP，换机改网段即可。
+        host: "10.19.236.*"
+  discovery:
+    # 三个开关缺一不可：enable(建 ShenyuDiscoveryConfig bean) + serverList(推 DiscoveryConfig 给 admin) + register(建 InstanceRegisterListener，真正注册实例到 nacos)
+    enable: true
+    serverList: localhost:8848        # nacos server 地址（nacos client 会自动 +1000 切到 gRPC 9848）
+    register: true
+    type: nacos                       # SPI key -> ExtensionLoader.getExtensionLoader(ShenyuInstanceRegisterRepository.class).getJoin("nacos")
+    protocol: http://                 # 注册到 nacos 的实例 URL 协议前缀
+    registerPath: shenyu-http-demo  # 作为 listenerNode 推给 admin（gateway 据此监听 nacos 该服务名下实例变化）；必须 = props.name(=Nacos 实际服务名) 才能在 admin 端闭环
+    props:
+      # 注册到 nacos 的服务名（InstanceRegisterListener:87 取 props.name 作 appName）。
+      # 两实例同名 -> nacos 同一服务下 2 实例 -> divide 负载均衡
+      name: shenyu-http-demo
+      nacosNameSpace: ""              # public namespace 的 ID 是空字符串（不是名字 "public"）
+      groupName: DEFAULT_GROUP
+      username: nacos                 # Nacos 鉴权已关闭(实测 NACOS_AUTH_ENABLE=false)，鉴权关闭时账号可留空；此处保留亦无害
+      password: nacos
 
 logging:
   level:

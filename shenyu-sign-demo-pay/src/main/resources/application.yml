@@ -24,7 +24,6 @@ shenyu:
       props:
         appName: sign-demo-pay
         contextPath: /pay-demo
-        host: 10.19.236.150
         port: 8392
         isFull: false
 

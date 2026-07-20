@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        pay-sign-standalone：提供给业务开发小组的「支付请求加签」工具模块。
+        - 算法层与 erpm-pay-center 的 RsaPayResponseSigner 完全一致：
+          SHA256withRSA + PKCS8 私钥 + 标准 Base64，统一抛 IllegalStateException。
+        - 签名串为请求标准 5 行：method\nurl\ntimestamp\nnonce\nbody\n
+          （与 erpm 响应 3 行不同，此处用于业务系统发出支付请求前加签）。
+        - 依赖与 erpm-pay-center 对齐：Spring Boot 2.3.12.RELEASE + Java 11。
+        - 不纳入根 reactor 构建，本地独立运行/被业务工程依赖。
+        - 仅做加签，不含验签逻辑。
+    -->
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.3.12.RELEASE</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.jzt.erpm.pay</groupId>
+    <artifactId>pay-sign-standalone</artifactId>
+    <version>1.0.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>pay-sign-standalone</name>
+    <description>支付请求加签工具（与 erpm-pay-center 加签算法一致），供业务开发小组使用</description>
+
+    <properties>
+        <java.version>11</java.version>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.release>11</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!--
+            Spring：提供 PayRequestSigner 的 @Component + @Value 风格 Bean，
+            复刻 erpm 的私钥注入方式。业务工程本就是 Spring Boot 工程，传递引入 spring 无副作用。
+        -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+
+        <!--
+            Spring Web：提供 PaySignInterceptor 所需的 ClientHttpRequestInterceptor，
+            用于 RestTemplate 拦截器场景。
+        -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+        </dependency>
+
+        <!-- 测试：JUnit 5 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- 用 release 而非 source/target，避免 JDK9+ 编译时误用高版本 API -->
+                    <release>${maven.compiler.release}</release>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

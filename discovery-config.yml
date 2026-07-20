@@ -1,0 +1,11 @@
+# Enable ShenYu Discovery module for Nacos
+shenyu:
+  discovery:
+    enabled: true
+    type: nacos
+    props:
+      serverList: nacos_server_232:8848
+      namespace: 
+      groupName: DEFAULT_GROUP
+      username: nacos
+      password: nacos

@@ -56,6 +56,49 @@
             <version>${shenyu.version}</version>
         </dependency>
 
+        <!-- Nacos 服务发现：客户端侧实例注册 SPI 实现 (shenyu.discovery.type=nacos)。
+             版本说明：必须用 2.6.1。2.7.x 官方正式版已是 Java17 字节码（class file version 61.0），
+             在本工程 Java11 JVM 上会抛 UnsupportedClassVersionError；2.6.1 是 Java8 字节码（major 52），可跑。
+             exclusions：
+               - shenyu-registry-api：强制用本仓库编译输出的 2.7.0.1-jdk8-SNAPSHOT 版（7 方法接口，Java8 字节码）。
+                 classpath 里 target/classes 排在 jar 之前，运行时接口=jdk8 7方法版；2.6.1 的
+                 NacosInstanceRegisterRepository 实现 4 个核心方法，都在 7 方法接口里且签名一致，兼容。
+               - nacos-client：2.6.1 默认带 2.0.4，与 nacos server 2.3.2 的 gRPC 版本不兼容
+                 （HTTP OpenAPI 正常但 gRPC InstanceRequest 被拒、Connection is unregistered；
+                 与鉴权无关。本环境鉴权已关 NACOS_AUTH_ENABLE=false，但仍建议 2.2.4 以避 client/server 版本错配）。改用 2.2.4。 -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-registry-nacos</artifactId>
+            <version>2.6.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-registry-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.alibaba.nacos</groupId>
+                    <artifactId>nacos-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- shenyu-common：NacosInstanceRegisterRepository(2.6.1) 的 catch 块引用
+             org.apache.shenyu.common.exception.ShenyuException，缺它会在任意 nacos 异常时
+             抛 NoClassDefFoundError。用本地已装的 2.6.1（Java8 字节码）；
+             2.7.0.1 正式版是 Java17 不可用，jdk8-SNAPSHOT 未安装。ShenyuException 是 POJO 异常类，跨版本稳定。 -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-common</artifactId>
+            <version>2.6.1</version>
+        </dependency>
+
+        <!-- nacos-client：显式锁定 2.2.4，兼容 nacos server 2.3.2 的 gRPC 版本（2.0.4 会 Connection is unregistered；鉴权已关，但仍因 client/server 版本错配建议 2.2.4）。 -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-client</artifactId>
+            <version>2.2.4</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
