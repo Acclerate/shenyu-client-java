@@ -19,7 +19,7 @@
 # Spring Cloud + ShenYu springCloud plugin + Nacos 2.5.1 demo
 # =====================================================================
 # 两条独立通道并存：
-#   通道① HTTP 元数据注册（shenyu.register）：把 @ShenyuRequestMapping 的 path 元数据推给 admin
+#   通道① HTTP 元数据注册（shenyu.register）：把 @ShenyxuRequestMapping 的 path 元数据推给 admin
 #   通道③ Nacos 服务发现（spring.cloud.nacos.discovery）：本服务实例注册到 Nacos
 #           shenyu-bootstrap 通过 NacosDiscoveryClient 拉取本服务实例，springCloud 插件据此转发
 # serviceId（= spring.application.name）同时是：
@@ -77,6 +77,14 @@ shenyu:
         #   false => 后端真实路径 = /order/findById（推荐，后端不感知 contextPath）
         #   true  => 后端真实路径 = /springcloud-demo/order/findById
         addPrefixed: false
+
+# === 验签公钥服务（供网关侧 SPI 通过 demo 端口直连，不经网关，避免循环验签）===
+# appKey → classpath:keys/ 下的 PEM 文件名映射（零 DB，启动一次性加载到内存）
+sign:
+  public-key-store:
+    keys:
+      biz001: biz-public-key.pem
+      biz002: biz-public-key-2.pem
 
 management:
   endpoints:

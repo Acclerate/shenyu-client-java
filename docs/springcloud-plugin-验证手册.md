@@ -32,7 +32,8 @@ netstat -ano | findstr :8848     # Windows
 ### b.2 启动 nacos 2.5.3
 
 ```shell
-cd D:/privategit/github/shenyu-client-java/docker/shenyu-springcloud-demo/nacos-2.5.3
+# 编排文件位置：gitee 仓库（不在本仓库内）
+cd D:/privategit/gitee/docker-compose/Windows/nacos
 docker-compose -f docker-compose-nacos-2.5.3.yml -p nacos253 up -d
 
 # 验证 nacos 健康（期望 {"status":"UP"}）
@@ -46,9 +47,9 @@ curl http://127.0.0.1:8848/nacos/v1/console/health/readiness
 docker exec mysql57 mysql -uroot -proot \
   -e "CREATE DATABASE IF NOT EXISTS nacos_config_253 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
 
-# (2) 从 2.5.3 镜像 dump schema 并导入（不写业务 SQL，仅建表脚本）
-MSYS_NO_PATHCONV=1 docker run --rm --entrypoint cat nacos/nacos-server:2.5.3 \
-  /home/nacos/conf/mysql-schema.sql | docker exec -i mysql57 mysql -uroot -proot nacos_config_253
+# (2) 导入 schema（gitee 仓库已 dump 好：nacos_2.5.3/nacos-mysql.sql，179 行 10 表）
+cd D:/privategit/gitee/docker-compose/Windows/nacos
+docker exec -i mysql57 mysql -uroot -proot nacos_config_253 < nacos_2.5.3/nacos-mysql.sql
 
 # (3) 重启 nacos 让它读到新库
 docker-compose -f docker-compose-nacos-2.5.3.yml -p nacos253 restart
@@ -57,26 +58,32 @@ docker-compose -f docker-compose-nacos-2.5.3.yml -p nacos253 restart
 # 浏览器打开 http://127.0.0.1:8848/nacos  (默认账号 nacos/nacos)
 ```
 
-> **schema 来源说明**：nacos 2.5.3 镜像内的 `/home/nacos/conf/mysql-schema.sql` 是官方建表脚本，
-> 本仓库不维护 SQL 文件，避免版本漂移；每次升级 nacos 镜像时直接 dump 即可。
+> **schema 来源说明**：`nacos_2.5.3/nacos-mysql.sql` 是从 2.5.3 镜像
+> `/home/nacos/conf/mysql-schema.sql` dump 出的官方建表脚本，随 gitee 仓库一起维护。
 
-### b.4 应用 bootstrap compose patch（让 bootstrap 接入 nacos 网络 + 开启 discovery）
+### b.4 bootstrap 接入 nacos 网络（已直接落档 gitee 仓库本体）
 
-详见 [`docker/shenyu-springcloud-demo/compose-patches/README.md`](../docker/shenyu-springcloud-demo/compose-patches/README.md)。
+`D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\docker-compose-ShenYu.yaml`
+的 `shenyu-bootstrap` 服务已包含三项关键配置（直接写在 compose 本体，不是 patch 文档）：
 
-简要步骤：
-1. 手动编辑 `D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\docker-compose-ShenYu.yaml`，
-   按 [`shenyu-261-bootstrap-attach-nacos-net.patch.yaml`](../docker/shenyu-springcloud-demo/compose-patches/shenyu-261-bootstrap-attach-nacos-net.patch.yaml) 改 3 处：
-   - `services.shenyu-bootstrap.networks` 加 `- nacos_net`
-   - `services.shenyu-bootstrap.environment` 加 `SPRING_CLOUD_*` / `SHENYU_SPRINGCLOUDCACHE_*` 项
-   - 顶层 `networks` 加 `nacos_net`（external, name: `nacos_net_232`）
-2. 验证：`docker-compose -f docker-compose-ShenYu.yaml config | grep nacosserver253`
-3. 重启 bootstrap：
+- `services.shenyu-bootstrap.networks` 加 `- nacos_net`（external `nacos_net_232`）
+- `services.shenyu-bootstrap.environment` 加 `SPRING_CLOUD_DISCOVERY_*` / `SHENYU_SPRINGCLOUDCACHE_ENABLED=false` 等
+- 顶层 `networks.nacos_net`（external）
+
+**操作步骤**（首次部署 / 切换 nacos 后重启 bootstrap 时）：
+
+1. 验证 compose 配置：
    ```shell
    cd D:/privategit/gitee/docker-compose/Windows/shenyu-2.6.1
-   docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 up -d shenyu-bootstrap
+   docker-compose -f docker-compose-ShenYu.yaml config | grep nacosserver253
    ```
-4. 连通性验证：
+2. 重建 bootstrap 容器（让网络与 env 生效；`docker restart` 不会重读 compose）：
+   ```shell
+   docker stop shenyu-bootstrap-261
+   docker rm shenyu-bootstrap-261
+   docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 up -d --no-deps shenyu-bootstrap
+   ```
+3. 连通性验证：
    ```shell
    docker exec shenyu-bootstrap-261 sh -c "wget -q -O - http://nacosserver253:8848/nacos/v1/ns/operator/metrics"
    # 期望返回 JSON 含 "status":"UP"
@@ -84,7 +91,7 @@ docker-compose -f docker-compose-nacos-2.5.3.yml -p nacos253 restart
 
 ### b.5 admin 控制台开启 springCloud 插件
 
-1. 浏览器打开 `http://127.0.0.1:9096`，登录（admin / 123456）。
+1. 浏览器打开 `http://127.0.0.1:9096`，登录（admin / `1qaz!QAZ`，本环境非默认的 123456）。
 2. 进入「基础配置 → 插件管理」。
 3. 找到 **springCloud** 插件（PluginList → Proxy 下），点击「编辑」，把 **启用** 设为开。
    - 2.6.1 springCloud 插件无需 selector 级的 discovery 配置（与 2.7.0 的 discovery-mode 不同）。

@@ -19,7 +19,7 @@ import org.springframework.core.env.Environment;
  * PayRsaSignConfiguration.
  *
  * <p>注册 {@link PayRsaSignService} 为 Spring Bean，替代默认的 ComposableSignService。
- * 支持公钥从 classpath 或 Redis 读取（用于密钥轮换）。
+ * 支持公钥从 classpath 或 HTTP（demo 提供的公钥接口）读取（用于密钥轮换）。
  */
 @Configuration
 public class PayRsaSignConfiguration {
@@ -27,26 +27,38 @@ public class PayRsaSignConfiguration {
     private static final Logger LOG = LoggerFactory.getLogger(PayRsaSignConfiguration.class);
 
     /**
-     * 业务公钥提供器。
+     * 业务公钥提供器（HTTP 源）。
+     *
+     * <p>构造完成后立即预热指定 appKey 的公钥缓存（在 Spring 启动线程上同步拉取，
+     * 不阻塞 EventLoop），确保网关开始接收流量前缓存已 warm。
      */
     @Bean
-    public DynamicBizPublicKeyProvider bizPublicKeyProvider(final Environment env) {
-        String source = getString(env, "gw.sign.key-source", "classpath");
-        String classpathLocation = getString(env, "gw.sign.classpath-public-key", "biz-public-key.pem");
-        String redisHost = getString(env, "gw.sign.redis.host", "127.0.0.1");
-        int redisPort = getInt(env, "gw.sign.redis.port", 6379);
-        String redisPassword = getString(env, "gw.sign.redis.password", "");
-        int redisDatabase = getInt(env, "gw.sign.redis.database", 0);
-        long redisTimeoutMs = getLong(env, "gw.sign.redis.timeout-ms", 1500L);
-        String redisKeyPattern = getString(env, "gw.sign.redis.biz-public-key-pattern", "shenyu:sign:%s:biz-public-key.pem");
-        long cacheTtlSeconds = getLong(env, "gw.sign.cache.ttl-seconds", 30L);
-        long retrySeconds = getLong(env, "gw.sign.cache.failure-retry-seconds", 3L);
-        boolean allowStale = getBoolean(env, "gw.sign.cache.allow-stale-on-refresh-failure", true);
-        return new DynamicBizPublicKeyProvider(
+    public HttpBizPublicKeyProvider bizPublicKeyProvider(final Environment env) {
+        String source = getString(env, "gw.springcloud.key-source", "classpath");
+        String classpathLocation = getString(env, "gw.springcloud.classpath-public-key", "biz-public-key.pem");
+        String baseUrl = getString(env, "gw.springcloud.http.base-url", "http://127.0.0.1:8470");
+        String pathPattern = getString(env, "gw.springcloud.http.path-pattern", "/sign/public-key/%s");
+        int connectTimeoutMs = getInt(env, "gw.springcloud.http.connect-timeout-ms", 1000);
+        int readTimeoutMs = getInt(env, "gw.springcloud.http.read-timeout-ms", 2000);
+        int maxConnections = getInt(env, "gw.springcloud.http.max-connections", 20);
+        long refreshIntervalSeconds = getLong(env, "gw.springcloud.http.refresh-interval-seconds", 15L);
+        long cacheTtlSeconds = getLong(env, "gw.springcloud.cache.ttl-seconds", 30L);
+        long retrySeconds = getLong(env, "gw.springcloud.cache.failure-retry-seconds", 3L);
+        boolean allowStale = getBoolean(env, "gw.springcloud.cache.allow-stale-on-refresh-failure", true);
+        HttpBizPublicKeyProvider provider = new HttpBizPublicKeyProvider(
                 source, classpathLocation,
-                redisHost, redisPort, redisPassword, redisDatabase, redisTimeoutMs,
-                redisKeyPattern, cacheTtlSeconds, retrySeconds, allowStale
+                baseUrl, pathPattern,
+                connectTimeoutMs, readTimeoutMs, maxConnections, refreshIntervalSeconds,
+                cacheTtlSeconds, retrySeconds, allowStale
         );
+        // 预热：在 Spring 启动线程（非 EventLoop）上同步拉取已知 appKey 的公钥
+        String preWarmAppKeys = getString(env, "gw.springcloud.pre-warm-app-keys", "");
+        if (!preWarmAppKeys.isEmpty()) {
+            String[] keys = preWarmAppKeys.split(",");
+            provider.preWarm(keys);
+            LOG.info("[GW-Sign] 预热完成 appKeys={}", preWarmAppKeys);
+        }
+        return provider;
     }
 
     /**
@@ -56,7 +68,7 @@ public class PayRsaSignConfiguration {
      * @ConditionalOnMissingBean(SignService.class) 而被跳过。
      */
     @Bean
-    public SignService signService(final DynamicBizPublicKeyProvider bizPublicKeyProvider) {
+    public SignService signService(final HttpBizPublicKeyProvider bizPublicKeyProvider) {
         LOG.info("[GW-Sign] PayRsaSignService 已注册，替换默认 ComposableSignService");
         return new PayRsaSignService(bizPublicKeyProvider);
     }

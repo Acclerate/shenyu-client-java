@@ -3,7 +3,8 @@
 > 整理时间：2026-07-18
 > 仓库：`D:\privategit\github\shenyu-client-java`
 > 适用场景：在本地 Docker 环境搭建「Spring Cloud 微服务 + Nacos 2.5.3 + ShenYu 2.6.1 springCloud 插件」全链路
-> 关联文档：[`springcloud-plugin-验证手册.md`](./springcloud-plugin-验证手册.md)（速查手册）、[`../docker/shenyu-springcloud-demo/README.md`](../docker/shenyu-springcloud-demo/README.md)（编排入口）
+> 关联文档：[`springcloud-plugin-验证手册.md`](./springcloud-plugin-验证手册.md)（速查手册）、
+> Docker 编排资源位置见 [`shenyu-springcloud-demo/README.md`](../shenyu-springcloud-demo/README.md) 的「相关资源」章节。
 
 ---
 
@@ -227,18 +228,23 @@ shenyu:
         addPrefixed: false
 ```
 
-### 3.2 Docker 编排资源
+### 3.2 Docker 编排资源（落在 gitee/docker-compose 仓库，不在本仓库内）
 
 ```
-docker/shenyu-springcloud-demo/
-├── README.md                                                 顶层入口说明
-├── nacos-2.5.3/
-│   └── docker-compose-nacos-2.5.3.yml                        Nacos 2.5.3 容器（2.5.x 末版）
-├── bootstrap-overlay/
-│   └── application-overlay.yml                               bootstrap 目标终态配置（参考）
-└── compose-patches/
-    ├── shenyu-261-bootstrap-attach-nacos-net.patch.yaml      对 gitee 仓库 compose 的补丁
-    └── README.md                                             补丁应用步骤
+D:/privategit/gitee/docker-compose/Windows/nacos/
+├── docker-compose-nacos-2.5.3.yml                             Nacos 2.5.3 容器（2.5.x 末版）
+└── nacos_2.5.3/
+    ├── conf/application.properties                            从 2.5.3 镜像 dump 的默认配置
+    ├── init.d/custom.properties                               标准 metrics 配置（复用 2.3.2）
+    ├── nacos-mysql.sql                                        从 2.5.3 镜像 dump 的 schema（179 行 10 表）
+    └── logs/                                                  运行时日志（.gitignore 排除）
+
+D:/privategit/gitee/docker-compose/Windows/shenyu-2.6.1/
+└── docker-compose-ShenYu.yaml                                 shenyu-admin + bootstrap 编排
+                                                               （bootstrap 服务已直接写入 nacos_net 接入 +
+                                                                SPRING_CLOUD_DISCOVERY_* env，不再用 patch 文档）
+
+D:/privategit/gitee/docker-compose/Windows/nacos/run.md        追加 2.5.3 启动命令 + 说明章节
 ```
 
 ### 3.3 文档
@@ -303,7 +309,7 @@ docker exec mysql57 mysql -uroot -proot -e "USE nacos_config_253; SHOW TABLES;"
 #### 1.4 启动 nacos 2.5.3
 
 ```shell
-cd D:/privategit/github/shenyu-client-java/docker/shenyu-springcloud-demo/nacos-2.5.3
+cd D:/privategit/gitee/docker-compose/Windows/nacos
 docker-compose -f docker-compose-nacos-2.5.3.yml -p nacos253 up -d
 ```
 
@@ -625,7 +631,7 @@ cd D:/privategit/gitee/docker-compose/Windows/mysql
 docker-compose -f docker-compose-mysql5.7.yml -p mysql up -d
 
 # 2) nacos 2.5.3
-cd D:/privategit/github/shenyu-client-java/docker/shenyu-springcloud-demo/nacos-2.5.3
+cd D:/privategit/gitee/docker-compose/Windows/nacos
 docker-compose -f docker-compose-nacos-2.5.3.yml -p nacos253 up -d
 
 # 3) shenyu-admin + bootstrap
@@ -732,11 +738,13 @@ nohup mvn -B -DskipTests spring-boot:run > /tmp/demo.log 2>&1 &
 
 | 文件 | 类型 | 说明 |
 |---|---|---|
-| `shenyu-springcloud-demo/`（新增整个模块） | 新增 | 业务侧 Maven 模块，4 个文件 |
-| `docker/shenyu-springcloud-demo/`（新增整个目录） | 新增 | Docker 编排资源，5 个文件 |
+| `shenyu-springcloud-demo/`（新增整个模块） | 新增 | 业务侧 Maven 模块（pom + 业务代码 + 测试 + .http 用例 + README） |
 | `docs/springcloud-plugin-验证手册.md` | 新增 | 8 节速查手册 |
 | `docs/springcloud-nacos-完整操作与调试记录.md` | 新增 | 本文件 |
-| `D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\docker-compose-ShenYu.yaml` | **修改（外部仓库）** | 加 networks + SPRING_CLOUD_* env，详见 docker/shenyu-springcloud-demo/compose-patches/ |
+| `D:\privategit\gitee\docker-compose\Windows\nacos\docker-compose-nacos-2.5.3.yml` | **新增（外部 gitee 仓库）** | Nacos 2.5.3 容器编排 |
+| `D:\privategit\gitee\docker-compose\Windows\nacos\nacos_2.5.3\` | **新增（外部 gitee 仓库）** | nacos 配置目录（conf / init.d / nacos-mysql.sql） |
+| `D:\privategit\gitee\docker-compose\Windows\nacos\run.md` | **修改（外部 gitee 仓库）** | 追加 2.5.3 启动命令 + 说明章节 |
+| `D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\docker-compose-ShenYu.yaml` | **修改（外部 gitee 仓库）** | bootstrap 服务加 networks（nacos_net） + SPRING_CLOUD_DISCOVERY_* env，直接写入 compose 本体（非 patch 文档） |
 
 ---
 
@@ -796,7 +804,7 @@ curl http://127.0.0.1:9196/springcloud-demo/order/findById?id=42
 | 本地容器 | `nacosserver223`（已 Exited 4h 的 2.2.3 残留容器） |
 | 本地镜像 tag | `nacos/nacos-server:v2.0.3`、`nacos/nacos-server:2.3.1`、`nacos/nacos-server:2.5.1` + 华为云源 `v2.3.1`、`v2.5.1`（v2.0.3 本来就只是 tag 无 layer） |
 | MySQL 库 | `nacos_config`（默认库，旧 2.0.x 残留）、`nacos_config_223`、`nacos_config_231`、`nacos_config_251` |
-| 本仓库目录 | `docker/shenyu-springcloud-demo/nacos-2.5.1/`（保留 2.5.3 即可） |
+| 业务模块下临时目录 | `shenyu-springcloud-demo/nacos-2.5.1/`（前序会话临时放在业务模块下的 nacos 编排，正式版迁到 gitee 后已删除；保留 2.5.3 即可） |
 
 ### 13.3 删除命令记录
 
@@ -814,8 +822,8 @@ docker exec mysql57 mysql -uroot -proot -e \
   "DROP DATABASE IF EXISTS nacos_config; DROP DATABASE IF EXISTS nacos_config_223; \
    DROP DATABASE IF EXISTS nacos_config_231; DROP DATABASE IF EXISTS nacos_config_251;"
 
-# 4) 本仓库目录
-rm -rf docker/shenyu-springcloud-demo/nacos-2.5.1
+# 4) 业务模块下的临时 nacos 编排目录（前序会话临时放，迁到 gitee 后已删）
+rm -rf shenyu-springcloud-demo/nacos-2.5.1
 ```
 
 > 注：gitee 仓库 `docker-compose/Windows/nacos/` 下的历史 compose 文件（1.4.1/2.0.4/2.2.3/2.3.1/2.3.2）**未动**，

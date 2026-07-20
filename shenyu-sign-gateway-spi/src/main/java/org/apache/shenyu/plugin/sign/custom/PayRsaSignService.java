@@ -48,7 +48,7 @@ public class PayRsaSignService implements SignService {
 
     private static final String X_PAY_SIGN = "X-Pay-Sign";
 
-    private static final String X_PAY_APP_KEY = "X-Pay-App-Key";
+            private static final String X_PAY_APP_KEY = "X-Pay-App-Key";
 
     private static final long   TIMESTAMP_TOLERANCE_SECONDS = 300L;
 

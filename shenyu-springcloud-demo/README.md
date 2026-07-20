@@ -1,7 +1,7 @@
 # shenyu-springcloud-demo
 
 > Spring Cloud 微服务接入 ShenYu 2.6.1 网关的最小可运行 demo，服务注册到 Nacos，经网关 **springCloud 插件**路由转发。
-> 与既有 `shenyu-http-demo`（走 **divide 插件** + HTTP 元数据注册）形成对照，演示「springCloud 委托器」路径。
+> 与同仓库 [`../shenyu-http-demo`](../shenyu-http-demo)（走 **divide 插件** + HTTP 元数据注册）形成对照，演示「springCloud 委托器」路径。
 
 ## 官方文档映射
 
@@ -59,7 +59,7 @@
 | spring-cloud-starter-alibaba-nacos-discovery | 2021.0.1.0（与 ShenYu 2.6.1 内置版本一致） |
 | spring-cloud-commons | 3.1.2（同上） |
 | nacos-client | 2.0.4（同上；官方规则兼容 server 2.5.3） |
-| Nacos server | 2.5.3（gitee/docker-compose 仓库管理） |
+| Nacos server | 2.5.3（编排位置见下方「相关资源」） |
 | Spring Boot（demo 侧） | 2.7.18 |
 
 ## 构建与运行
@@ -88,7 +88,7 @@ mvn test
 ### 启动（依赖外部 docker 环境）
 
 前置：`mysql57` + `nacosserver253` + `shenyu-admin-261` + `shenyu-bootstrap-261` 已运行
-（编排见 `docker/shenyu-springcloud-demo/README.md`）。
+（docker 编排位置见下方「相关资源」）。
 
 ```shell
 mvn spring-boot:run
@@ -160,7 +160,7 @@ Nacos 2.5.x 鉴权空仓校验。鉴权关闭时不传 `username/password`（本
 
 ### 4. 详细排查
 
-见 [`docs/springcloud-plugin-验证手册.md`](../docs/springcloud-plugin-验证手册.md) 的 g 章节。
+见 [`../docs/springcloud-plugin-验证手册.md`](../docs/springcloud-plugin-验证手册.md) 的 g 章节。
 
 ## 关键约束（来自官方文档）
 
@@ -175,6 +175,18 @@ Nacos 2.5.x 鉴权空仓校验。鉴权关闭时不传 `username/password`（本
 - **灰度发布**：双实例 + selector 的 `gray=true` + header 条件路由（官方 2.5.2 节）
 - **访问未注册到 ShenYu 的服务**：通过 `rpc_type: springCloud` 请求头（官方 2.6.2.5.1 节）
 - **多实例负载均衡观测**：启动 2 个 demo 实例（不同端口），用 `instanceId` 字段观察 roundRobin 分发
+
+## 相关资源（不在本模块内）
+
+> 本模块仅包含业务侧代码。Docker 编排、配置补丁等基础设施资源存放位置：
+
+| 资源 | 位置 |
+|---|---|
+| Nacos 2.5.3 docker-compose | gitee 仓库 `D:\privategit\gitee\docker-compose\Windows\nacos\docker-compose-nacos-2.5.3.yml` |
+| Nacos 2.5.3 子目录（conf/init.d/nacos-mysql.sql） | gitee 仓库 `D:\privategit\gitee\docker-compose\Windows\nacos\nacos_2.5.3\` |
+| ShenYu 2.6.1 docker-compose（admin + bootstrap） | gitee 仓库 `D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\docker-compose-ShenYu.yaml`（已内置 springCloud 插件 + nacos discovery 配置） |
+| 端到端验证手册 | 本仓库 [`../docs/springcloud-plugin-验证手册.md`](../docs/springcloud-plugin-验证手册.md) |
+| 完整操作与调试记录 | 本仓库 [`../docs/springcloud-nacos-完整操作与调试记录.md`](../docs/springcloud-nacos-完整操作与调试记录.md) |
 
 ## 文件清单
 

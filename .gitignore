@@ -21,6 +21,8 @@ cobertura.ser
 
 # idea ignore
 .idea/
+.workbuddy/
+.zcode/
 !/.idea/icon.svg
 !/.idea/vcs.xml
 *.ipr

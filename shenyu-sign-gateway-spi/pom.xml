@@ -33,6 +33,13 @@
             <version>${shenyu.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- ShenYu plugin-base（provided，由 bootstrap 容器提供）：BaseDataCache -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-plugin-base</artifactId>
+            <version>${shenyu.version}</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- Spring WebFlux（provided，由 bootstrap 容器提供） -->
         <dependency>
             <groupId>org.springframework</groupId>
@@ -46,12 +53,27 @@
             <version>${spring.version}</version>
             <scope>provided</scope>
         </dependency>
-        <!-- lettuce 由镜像提供（探查发现 apache/shenyu-bootstrap:2.6.1 内含 lettuce-core-6.1.10.RELEASE.jar） -->
+        <!-- Apache HttpClient（同步）：bootstrap 镜像 lib/ 已含 httpclient-4.5.14 + httpcore-4.4.16 -->
         <dependency>
-            <groupId>io.lettuce</groupId>
-            <artifactId>lettuce-core</artifactId>
-            <version>6.3.2.RELEASE</version>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.14</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- gson：解析 demo 返回的公钥 JSON（镜像 lib/ 已含 gson-2.9.0，避免引入 Jackson 与 WebFlux 冲突） -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.9.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- 测试：JUnit 5（httpclient / gson 为 provided，在 test classpath 同样可用） -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.9.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -62,6 +84,12 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.3.0</version>
+            </plugin>
+            <!-- 单元测试（JUnit 5） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.1.2</version>
             </plugin>
         </plugins>
     </build>
