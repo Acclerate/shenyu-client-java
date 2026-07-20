@@ -38,6 +38,10 @@ spring:
   main:
     allow-bean-definition-overriding: true
   cloud:
+    # 显式开启 Spring Cloud 服务发现总开关（官方文档强调必开，对齐 shenyu-bootstrap 侧）。
+    # 不写时 Spring Cloud Commons 默认就是 true，但显式声明便于排查。
+    discovery:
+      enabled: true
     nacos:
       discovery:
         # 宿主机访问容器映射端口（docker-compose 把容器 8848 映射到宿主 8848）

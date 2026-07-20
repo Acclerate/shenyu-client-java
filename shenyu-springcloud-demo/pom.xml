@@ -126,6 +126,17 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+
+        <!-- ============================================================= -->
+        <!-- 5) 测试依赖（scope=test，不打入最终 fat jar）                  -->
+        <!--    spring-boot-starter-test 含：JUnit 5 + AssertJ + MockMvc +  -->
+        <!--    Hamcrest + Mockito + JSONassert + JsonPath                 -->
+        <!-- ============================================================= -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
