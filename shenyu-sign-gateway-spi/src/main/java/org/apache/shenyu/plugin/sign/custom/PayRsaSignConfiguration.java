@@ -1,10 +1,10 @@
 /*
- * PayRsaSignConfiguration —— 注册自定义 SignService Bean，替换默认 ComposableSignService。
+ * PayRsaSignConfiguration —— SPI 自动装配入口。
  *
- * 关键机制：
- * 1. SignPluginConfiguration 用 @ConditionalOnMissingBean(SignService.class, search=ALL) 注册默认 Bean
- * 2. 本 @Bean SignService 先于条件判断被扫描到，默认 Bean 被跳过
- * 3. 此 jar 放 shenyu-bootstrap/ext-lib/，JVM 启动时进 classpath，Spring 启动期即可扫描
+ * 注册 AdminConfigBizPublicKeyProvider 和 PayRsaSignService（替换 ShenYu 原生
+ * ComposableSignService，通过 @ConditionalOnMissingBean 机制）。
+ *
+ * 此 jar 放 shenyu-bootstrap/ext-lib/，通过 META-INF/spring.factories 触发加载。
  */
 package org.apache.shenyu.plugin.sign.custom;
 
@@ -15,98 +15,42 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
-/**
- * PayRsaSignConfiguration.
- *
- * <p>注册 {@link PayRsaSignService} 为 Spring Bean，替代默认的 ComposableSignService。
- * 支持公钥从 classpath 或 HTTP（demo 提供的公钥接口）读取（用于密钥轮换）。
- */
 @Configuration
 public class PayRsaSignConfiguration {
 
     private static final Logger LOG = LoggerFactory.getLogger(PayRsaSignConfiguration.class);
 
-    /**
-     * 业务公钥提供器（HTTP 源）。
-     *
-     * <p>构造完成后立即预热指定 appKey 的公钥缓存（在 Spring 启动线程上同步拉取，
-     * 不阻塞 EventLoop），确保网关开始接收流量前缓存已 warm。
-     */
+    /** 后台从 BaseDataCache 同步公钥的周期配置项（秒） */
+    private static final String REFRESH_INTERVAL_KEY = "gw.springcloud.refresh-interval-seconds";
+
+    /** 同步周期默认值（秒） */
+    private static final long DEFAULT_REFRESH_INTERVAL_SECONDS = 30L;
+
     @Bean
-    public HttpBizPublicKeyProvider bizPublicKeyProvider(final Environment env) {
-        String source = getString(env, "gw.springcloud.key-source", "classpath");
-        String classpathLocation = getString(env, "gw.springcloud.classpath-public-key", "biz-public-key.pem");
-        String baseUrl = getString(env, "gw.springcloud.http.base-url", "http://127.0.0.1:8470");
-        String pathPattern = getString(env, "gw.springcloud.http.path-pattern", "/sign/public-key/%s");
-        int connectTimeoutMs = getInt(env, "gw.springcloud.http.connect-timeout-ms", 1000);
-        int readTimeoutMs = getInt(env, "gw.springcloud.http.read-timeout-ms", 2000);
-        int maxConnections = getInt(env, "gw.springcloud.http.max-connections", 20);
-        long refreshIntervalSeconds = getLong(env, "gw.springcloud.http.refresh-interval-seconds", 15L);
-        long cacheTtlSeconds = getLong(env, "gw.springcloud.cache.ttl-seconds", 30L);
-        long retrySeconds = getLong(env, "gw.springcloud.cache.failure-retry-seconds", 3L);
-        boolean allowStale = getBoolean(env, "gw.springcloud.cache.allow-stale-on-refresh-failure", true);
-        HttpBizPublicKeyProvider provider = new HttpBizPublicKeyProvider(
-                source, classpathLocation,
-                baseUrl, pathPattern,
-                connectTimeoutMs, readTimeoutMs, maxConnections, refreshIntervalSeconds,
-                cacheTtlSeconds, retrySeconds, allowStale
-        );
-        // 预热：在 Spring 启动线程（非 EventLoop）上同步拉取已知 appKey 的公钥
-        String preWarmAppKeys = getString(env, "gw.springcloud.pre-warm-app-keys", "");
-        if (!preWarmAppKeys.isEmpty()) {
-            String[] keys = preWarmAppKeys.split(",");
-            provider.preWarm(keys);
-            LOG.info("[GW-Sign] 预热完成 appKeys={}", preWarmAppKeys);
-        }
-        return provider;
+    public AdminConfigBizPublicKeyProvider bizPublicKeyProvider(final Environment env) {
+        final long refreshInterval = readRefreshIntervalSeconds(env, REFRESH_INTERVAL_KEY, DEFAULT_REFRESH_INTERVAL_SECONDS);
+        return new AdminConfigBizPublicKeyProvider(refreshInterval);
+    }
+
+    @Bean
+    public SignService signService(final AdminConfigBizPublicKeyProvider provider) {
+        LOG.info("[GW-Sign] PayRsaSignService 已注册（公钥源 = admin plugin.config gw.springcloud.app-key.*）");
+        return new PayRsaSignService(provider);
     }
 
     /**
-     * 自定义 SignService Bean。
-     *
-     * <p>此 Bean 注册后，SignPluginConfiguration 的默认 @Bean signService() 因
-     * @ConditionalOnMissingBean(SignService.class) 而被跳过。
+     * 读取长整型配置项；缺失或非法时回退默认值。
      */
-    @Bean
-    public SignService signService(final HttpBizPublicKeyProvider bizPublicKeyProvider) {
-        LOG.info("[GW-Sign] PayRsaSignService 已注册，替换默认 ComposableSignService");
-        return new PayRsaSignService(bizPublicKeyProvider);
-    }
-
-    private String getString(final Environment env, final String key, final String defaultValue) {
-        String value = env.getProperty(key);
-        return value == null ? defaultValue : value.trim();
-    }
-
-    private int getInt(final Environment env, final String key, final int defaultValue) {
-        String value = env.getProperty(key);
-        if (value == null || value.trim().isEmpty()) {
+    private static long readRefreshIntervalSeconds(final Environment env, final String key, final long defaultValue) {
+        final String raw = env.getProperty(key);
+        if (raw == null || raw.trim().isEmpty()) {
             return defaultValue;
         }
         try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException ignored) {
+            return Long.parseLong(raw.trim());
+        } catch (final NumberFormatException ignored) {
+            LOG.warn("[GW-Sign] 配置项 {} 值非法（{}），使用默认值 {}s", key, raw, defaultValue);
             return defaultValue;
         }
-    }
-
-    private long getLong(final Environment env, final String key, final long defaultValue) {
-        String value = env.getProperty(key);
-        if (value == null || value.trim().isEmpty()) {
-            return defaultValue;
-        }
-        try {
-            return Long.parseLong(value.trim());
-        } catch (NumberFormatException ignored) {
-            return defaultValue;
-        }
-    }
-
-    private boolean getBoolean(final Environment env, final String key, final boolean defaultValue) {
-        String value = env.getProperty(key);
-        if (value == null || value.trim().isEmpty()) {
-            return defaultValue;
-        }
-        return Boolean.parseBoolean(value.trim());
     }
 }

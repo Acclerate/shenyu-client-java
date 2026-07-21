@@ -112,15 +112,16 @@ public final class PaySignVerifier {
     /**
      * 时间戳时效校验（防重放），请求/响应/回调均可使用.
      *
-     * @param timestamp         秒级时间戳
+     * @param timestamp         毫秒级时间戳（X-Pay-Timestamp 头值，13 位整数字符串）
      * @param toleranceSeconds  允许偏差秒数（建议 {@link SignConstants#DEFAULT_TIMESTAMP_TOLERANCE_SECONDS}）
      * @return {@code true} 时间戳在允许偏差内
      */
     public static boolean checkTimestamp(final String timestamp, final long toleranceSeconds) {
         try {
-            long ts = Long.parseLong(timestamp);
-            long now = Instant.now().getEpochSecond();
-            return Math.abs(now - ts) <= toleranceSeconds;
+            // 入站时间戳为毫秒级：换算成秒后与当前秒比较，容差单位保持秒不变（与网关 PayRsaSignService 校验逻辑一致）
+            final long tsSec = Long.parseLong(timestamp) / 1000L;
+            final long nowSec = Instant.now().getEpochSecond();
+            return Math.abs(nowSec - tsSec) <= toleranceSeconds;
         } catch (NumberFormatException e) {
             LOG.warn("timestamp format invalid: {}", timestamp);
             return false;

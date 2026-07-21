@@ -28,7 +28,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.security.PrivateKey;
-import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -40,7 +39,7 @@ import java.util.UUID;
  *
  * <p>拦截每个出站请求，自动完成：
  * <ol>
- *   <li>生成秒级时间戳与 32 位 hex 随机串（nonce）</li>
+ *   <li>生成毫秒级时间戳与 32 位 hex 随机串（nonce）</li>
  *   <li>读取请求体原文（通过 {@link Buffer} 缓冲，避免消费流）</li>
  *   <li>构造 5 行待签名串（{@link SignStringBuilder#buildRequestSignString}）</li>
  *   <li>使用业务系统私钥做 SHA256withRSA 签名（{@link RsaSigner#sign}）</li>
@@ -73,7 +72,7 @@ public final class PaySignInterceptor implements Interceptor {
     @Override
     public Response intercept(final Chain chain) throws IOException {
         Request original = chain.request();
-        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String timestamp = String.valueOf(System.currentTimeMillis());
         String nonce = UUID.randomUUID().toString().replace("-", "");
 
         String method = Objects.isNull(original.method()) ? "GET" : original.method().toUpperCase();

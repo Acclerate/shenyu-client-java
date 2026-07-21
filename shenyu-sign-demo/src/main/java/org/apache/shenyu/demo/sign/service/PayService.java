@@ -32,7 +32,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -98,7 +97,7 @@ public class PayService {
      * @return 签名头信息（timestamp / nonce / sign）
      */
     public Map<String, String> signResponse(final String body) {
-        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String timestamp = String.valueOf(System.currentTimeMillis());
         String nonce = UUID.randomUUID().toString().replace("-", "");
         String signString = SignStringBuilder.buildResponseSignString(timestamp, nonce, body);
         String sign = RsaSigner.sign(signString, payPrivateKey);
@@ -118,7 +117,7 @@ public class PayService {
      */
     public NotifyPayload buildNotify(final String tradeNo) {
         String body = "{\"trade_no\":\"" + tradeNo + "\",\"status\":\"SUCCESS\",\"paid_at\":"
-                + Instant.now().getEpochSecond() + "}";
+                + System.currentTimeMillis() + "}";
         Map<String, String> headers = signResponse(body);
         return new NotifyPayload(body, headers);
     }

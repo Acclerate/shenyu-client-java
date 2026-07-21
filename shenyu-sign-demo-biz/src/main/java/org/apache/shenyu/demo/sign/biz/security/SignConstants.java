@@ -33,7 +33,7 @@ package org.apache.shenyu.demo.sign.biz.security;
 public final class SignConstants {
 
     /**
-     * HTTP 头：请求/应答时间戳（秒级，10 位整数字符串）.
+     * HTTP 头：请求/应答时间戳（毫秒级，13 位整数字符串）.
      */
     public static final String X_PAY_TIMESTAMP = "X-Pay-Timestamp";
 

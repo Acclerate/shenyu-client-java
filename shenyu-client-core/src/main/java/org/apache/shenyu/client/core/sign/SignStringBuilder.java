@@ -60,7 +60,7 @@ public final class SignStringBuilder {
      * @param url       请求 URL 的绝对路径部分，GET 请求需含 query string，例如
      *                  {@code /v3/pay/transactions/jsapi} 或
      *                  {@code /v3/marketing/partnerships?limit=5&offset=10}。不含 scheme/host。
-     * @param timestamp 请求时间戳（秒级，字符串）
+     * @param timestamp 请求时间戳（毫秒级，字符串）
      * @param nonce     请求随机串
      * @param body      请求报文主体；GET 请求传 {@code null} 或空串
      * @return 待签名串，5 行均以 {@code \n} 结尾
