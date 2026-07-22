@@ -26,7 +26,7 @@ public class PayRsaSignConfiguration {
     /** 同步周期默认值（秒） */
     private static final long DEFAULT_REFRESH_INTERVAL_SECONDS = 30L;
 
-    @Bean
+    @Bean(destroyMethod = "close")
     public AdminConfigBizPublicKeyProvider bizPublicKeyProvider(final Environment env) {
         final long refreshInterval = readRefreshIntervalSeconds(env, REFRESH_INTERVAL_KEY, DEFAULT_REFRESH_INTERVAL_SECONDS);
         return new AdminConfigBizPublicKeyProvider(refreshInterval);
