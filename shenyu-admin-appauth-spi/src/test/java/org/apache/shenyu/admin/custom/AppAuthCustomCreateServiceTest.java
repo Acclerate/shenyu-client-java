@@ -27,13 +27,29 @@ import static org.mockito.Mockito.when;
  *
  * <p>覆盖矩阵：
  * <ul>
- *   <li>创建分支：findByAppKey 返回 null → insertSelective + publishEvent(CREATE)</li>
- *   <li>更新分支：findByAppKey 返回已存在 → updateSelective + publishEvent(UPDATE)</li>
- *   <li>enabled/open 默认值：入参为 null 时 enabled=true, open=false</li>
- *   <li>publishEvent 的 AppAuthData 字段正确性（appKey/appSecret/enabled/open）</li>
+ *   <li>创建分支：findByAppKey 返回 null → insertSelective + publishEvent(APP_AUTH, CREATE)</li>
+ *   <li>更新分支：findByAppKey 返回已存在 → updateSelective + publishEvent(APP_AUTH, UPDATE)</li>
+ *   <li>insert 缺省：enabled/open 入参 null 且无现值 → enabled=true, open=false</li>
+ *   <li>enabled=false 显式禁用被尊重</li>
+ *   <li>P1① 回归：update 未传 enabled/open → 保留 exist 现值（禁用的 appKey 轮换公钥不被静默重新启用）</li>
+ *   <li>P1① 回归：update 显式传 enabled=true → 覆盖 exist 的 false（显式优先于现值）</li>
+ *   <li>P2⑤ 回归：非法 PEM → 400，不落库、不推送</li>
  * </ul>
  */
 class AppAuthCustomCreateServiceTest {
+
+    /**
+     * 真实的 2048-bit X.509 RSA 公钥 PEM（openssl 生成，仅测试用），可通过 fail-fast 校验。
+     */
+    private static final String VALID_PEM = "-----BEGIN PUBLIC KEY-----\n"
+            + "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4XNGWw1qa9v9Q4BbQlWz\n"
+            + "RgiG+Fnxa46oFPkliqSOF6QSlZWmiReWwFPVJ7kHLb1hZndmbjSYdt7ZBhKtrA9Q\n"
+            + "XsuustaqObqWGa++4dDAAG5VOhF0Xo/WUUk9PMMa8ouMyfO6pG4qozynAHo7ZnTP\n"
+            + "2PvnFDA69ctYsuA6HSPP/08qe2qUXBjvgshSRA07yOwe2IOhmkNlatJaRn0vpmId\n"
+            + "BiXyotFBXcK6z3of8Y7yfbh4PrMGvni3bnHu45+7kxX/VmrHDRfaSaw1M2hcsFdx\n"
+            + "RPhu7JzghK36Sbp5kzqw148GfbWYQNGyH5Ps6e8SXhaLDfWTkNiyitR0LuV5lJm3\n"
+            + "swIDAQAB\n"
+            + "-----END PUBLIC KEY-----";
 
     private AppAuthMapper appAuthMapper;
     private ApplicationEventPublisher eventPublisher;
@@ -47,15 +63,14 @@ class AppAuthCustomCreateServiceTest {
     }
 
     /**
-     * 创建分支：appKey 不存在 → insertSelective + publishEvent(CREATE)，响应回传 id + appKey。
+     * 创建分支：appKey 不存在 → insertSelective + publishEvent(APP_AUTH, CREATE)，响应回传 id + appKey。
      */
     @Test
     void shouldInsertAndPublishCreateEventWhenAppKeyNotExist() {
         String appKey = "YYT";
-        String pem = "-----BEGIN PUBLIC KEY-----\nMIIBIjAN\n-----END PUBLIC KEY-----";
         when(appAuthMapper.findByAppKey(appKey)).thenReturn(null);
 
-        CustomAppAuthCreateReq req = newReq(appKey, pem, true, false);
+        CustomAppAuthCreateReq req = newReq(appKey, VALID_PEM, true, false);
 
         ShenyuAdminResult result = service.upsertAndPush(req);
 
@@ -71,7 +86,7 @@ class AppAuthCustomCreateServiceTest {
         // 验证推送的 AppAuthData 字段
         AppAuthData pushed = (AppAuthData) event.getSource().get(0);
         assertEquals(appKey, pushed.getAppKey());
-        assertEquals(pem, pushed.getAppSecret());
+        assertEquals(VALID_PEM, pushed.getAppSecret());
 
         // 验证响应回传 id + appKey
         assertEquals(200, result.getCode());
@@ -81,17 +96,16 @@ class AppAuthCustomCreateServiceTest {
     }
 
     /**
-     * 更新分支：appKey 已存在 → updateSelective + publishEvent(UPDATE)，复用已存在记录的 id。
+     * 更新分支：appKey 已存在 → updateSelective + publishEvent(APP_AUTH, UPDATE)，复用已存在记录的 id。
      */
     @Test
     void shouldUpdateAndPublishUpdateEventWhenAppKeyExist() {
         String appKey = "SYD";
-        String pem = "-----BEGIN PUBLIC KEY-----\nnewKey\n-----END PUBLIC KEY-----";
         String existId = "exist-id-123";
-        AppAuthDO exist = AppAuthDO.builder().id(existId).appKey(appKey).build();
+        AppAuthDO exist = AppAuthDO.builder().id(existId).appKey(appKey).enabled(true).open(false).build();
         when(appAuthMapper.findByAppKey(appKey)).thenReturn(exist);
 
-        CustomAppAuthCreateReq req = newReq(appKey, pem, true, false);
+        CustomAppAuthCreateReq req = newReq(appKey, VALID_PEM, true, false);
 
         ShenyuAdminResult result = service.upsertAndPush(req);
 
@@ -112,15 +126,14 @@ class AppAuthCustomCreateServiceTest {
     }
 
     /**
-     * enabled/open 为 null 时走默认值：enabled=true, open=false。
+     * insert 分支缺省：enabled/open 为 null 且无现值 → enabled=true, open=false。
      */
     @Test
-    void shouldUseDefaultEnabledAndOpenWhenNull() {
+    void shouldUseDefaultEnabledAndOpenWhenNullOnInsert() {
         String appKey = "DEFAULT";
-        String pem = "-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----";
         when(appAuthMapper.findByAppKey(appKey)).thenReturn(null);
 
-        CustomAppAuthCreateReq req = newReq(appKey, pem, null, null);
+        CustomAppAuthCreateReq req = newReq(appKey, VALID_PEM, null, null);
 
         service.upsertAndPush(req);
 
@@ -138,10 +151,9 @@ class AppAuthCustomCreateServiceTest {
     @Test
     void shouldRespectDisabledFlagWhenEnabledFalse() {
         String appKey = "DISABLED";
-        String pem = "-----BEGIN PUBLIC KEY-----\ny\n-----END PUBLIC KEY-----";
         when(appAuthMapper.findByAppKey(appKey)).thenReturn(null);
 
-        CustomAppAuthCreateReq req = newReq(appKey, pem, false, null);
+        CustomAppAuthCreateReq req = newReq(appKey, VALID_PEM, false, null);
 
         service.upsertAndPush(req);
 
@@ -150,6 +162,90 @@ class AppAuthCustomCreateServiceTest {
         AppAuthData pushed = (AppAuthData) captor.getValue().getSource().get(0);
         assertEquals(Boolean.FALSE, pushed.getEnabled());
         assertEquals(Boolean.FALSE, pushed.getOpen());
+    }
+
+    /**
+     * P1① 回归（核心场景）：已禁用的 appKey 只轮换公钥（不传 enabled/open）
+     * → DB 写入与推送均保留 enabled=false / open=true 现值，不被静默重新启用。
+     */
+    @Test
+    void shouldKeepExistingEnabledAndOpenWhenNotProvidedOnUpdate() {
+        String appKey = "ROTATE-ONLY";
+        AppAuthDO exist = AppAuthDO.builder()
+                .id("id-1").appKey(appKey).enabled(false).open(true).build();
+        when(appAuthMapper.findByAppKey(appKey)).thenReturn(exist);
+
+        CustomAppAuthCreateReq req = newReq(appKey, VALID_PEM, null, null);
+
+        service.upsertAndPush(req);
+
+        // DB 写入保留现值
+        ArgumentCaptor<AppAuthDO> doCaptor = ArgumentCaptor.forClass(AppAuthDO.class);
+        verify(appAuthMapper).updateSelective(doCaptor.capture());
+        assertEquals(Boolean.FALSE, doCaptor.getValue().getEnabled());
+        assertEquals(Boolean.TRUE, doCaptor.getValue().getOpen());
+
+        // 推送到网关的 AppAuthData 同样保留现值（网关 enabled 检查依赖它）
+        ArgumentCaptor<DataChangedEvent> evCaptor = ArgumentCaptor.forClass(DataChangedEvent.class);
+        verify(eventPublisher).publishEvent(evCaptor.capture());
+        AppAuthData pushed = (AppAuthData) evCaptor.getValue().getSource().get(0);
+        assertEquals(Boolean.FALSE, pushed.getEnabled());
+        assertEquals(Boolean.TRUE, pushed.getOpen());
+    }
+
+    /**
+     * P1① 补充：update 显式传 enabled=true → 覆盖 exist 的 false（显式意图优先于现值）。
+     */
+    @Test
+    void shouldOverrideExistingEnabledWhenExplicitlyProvidedOnUpdate() {
+        String appKey = "RE-ENABLE";
+        AppAuthDO exist = AppAuthDO.builder()
+                .id("id-2").appKey(appKey).enabled(false).open(false).build();
+        when(appAuthMapper.findByAppKey(appKey)).thenReturn(exist);
+
+        CustomAppAuthCreateReq req = newReq(appKey, VALID_PEM, true, null);
+
+        service.upsertAndPush(req);
+
+        ArgumentCaptor<AppAuthDO> doCaptor = ArgumentCaptor.forClass(AppAuthDO.class);
+        verify(appAuthMapper).updateSelective(doCaptor.capture());
+        assertEquals(Boolean.TRUE, doCaptor.getValue().getEnabled());
+        // open 未传 → 保留现值 false
+        assertEquals(Boolean.FALSE, doCaptor.getValue().getOpen());
+    }
+
+    /**
+     * P2⑤ 回归：非法 PEM（结构损坏）→ 400，不落库、不推送。
+     */
+    @Test
+    void shouldRejectInvalidPemWithoutDbWriteOrPush() {
+        String appKey = "BAD-PEM";
+        String badPem = "-----BEGIN PUBLIC KEY-----\nnot-a-real-key\n-----END PUBLIC KEY-----";
+
+        CustomAppAuthCreateReq req = newReq(appKey, badPem, null, null);
+
+        ShenyuAdminResult result = service.upsertAndPush(req);
+
+        assertEquals(400, result.getCode());
+        verify(appAuthMapper, never()).insertSelective(any(AppAuthDO.class));
+        verify(appAuthMapper, never()).updateSelective(any(AppAuthDO.class));
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    /**
+     * P2⑤ 回归：缺 BEGIN/END 标记的裸 Base64 垃圾串 → 400（同样被 KeyFactory 拒绝）。
+     */
+    @Test
+    void shouldRejectGarbageSecretWithoutMarkers() {
+        String appKey = "GARBAGE";
+
+        CustomAppAuthCreateReq req = newReq(appKey, "hello-world-not-pem", null, null);
+
+        ShenyuAdminResult result = service.upsertAndPush(req);
+
+        assertEquals(400, result.getCode());
+        verify(appAuthMapper, never()).insertSelective(any(AppAuthDO.class));
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     private CustomAppAuthCreateReq newReq(String appKey, String appSecret, Boolean enabled, Boolean open) {

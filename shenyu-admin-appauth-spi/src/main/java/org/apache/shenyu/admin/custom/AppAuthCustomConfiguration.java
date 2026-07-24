@@ -34,7 +34,8 @@ public class AppAuthCustomConfiguration {
 
     @Bean
     public AppAuthCustomCreateService appAuthCustomCreateService(
-            AppAuthMapper appAuthMapper, ApplicationEventPublisher eventPublisher) {
+            AppAuthMapper appAuthMapper,
+            ApplicationEventPublisher eventPublisher) {
         return new AppAuthCustomCreateService(appAuthMapper, eventPublisher);
     }
 }

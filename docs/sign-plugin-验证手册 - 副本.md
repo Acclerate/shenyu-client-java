@@ -244,7 +244,7 @@ sequenceDiagram
     participant GW as "ShenYu 网关插件链"
     participant SPI as "PayRsaSignService(本SPI)"
     participant KP as "DynamicBizPublicKeyProvider"
-    participant SRC as "密钥源 Redis/classpath"
+    participant SRC as "密钥源 springCloud 插件 config(BaseDataCache)"
     participant PAY as "支付服务"
 
     Note over GW,SPI: 【启动期·一次性】SPI jar 入 ext-lib 上 classpath<br/>spring.factories 注册 PayRsaSignConfiguration<br/>@Bean SignService 借 @ConditionalOnMissingBean 覆盖默认 ComposableSignService
@@ -266,8 +266,8 @@ sequenceDiagram
         alt 缓存命中(TTL≤30s)
             KP-->>SPI: 返回缓存公钥
         else 过期/未命中
-            KP->>SRC: readPem(): Redis GET → 失败转 classpath PEM
-            SRC-->>KP: PEM 文本
+            KP->>SRC: readAppKey(): BaseDataCache←springCloud 插件 config 扫描 gw.springcloud.app-key.{appKey}
+            SRC-->>KP: 公钥文本（gw.springcloud.app-key.{appKey} 字段值）
             KP->>KP: parsePem + 单飞锁刷新缓存
             KP-->>SPI: 返回公钥
         end
@@ -297,7 +297,7 @@ sequenceDiagram
 | 2 | **插件顺序是隐含契约** | `SignPlugin(order=50)` 早于 `ContextPathPlugin(150)`，SPI 读到的 `exchange.getRequest().getURI().getPath()` 仍含 contextPath（如 `/pay-demo/v3/pay/...`），与客户端加签时的 url 完全一致——这是验签成立的隐含前提，**切勿改插件顺序**。 |
 | 3 | **5 行待签名串** | `method\n url\n ts\n nonce\n body\n`，其中 `url = path [+ "?" + query]`、GET 的 `body` 为空串。与客户端 `SignStringBuilder.buildRequestSignString` 严格对称。 |
 | 4 | **真实 HTTP 401** | `fail401(exchange, reason)` 先 `exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED)` 再 `return VerifyResult.fail(reason)`。状态码在 `SignPlugin` 写 body 之前已设定，`WebFluxResultUtils.result()` 不覆盖状态码，故 401 保留。**5 个失败出口**（缺头 / 时间戳非法 / 过期 / 验签失败 / 抛异常）统一走 `fail401`。 |
-| 5 | **公钥三级降级** | 主源 Redis（`GET shenyu:sign:biz-public-key.pem`）→ 兜底 classpath `biz-public-key.pem` → 旧缓存 stale 续命（`allow-stale-on-refresh-failure=true`）。Redis 故障**不阻断网关启动**（构造器吞连接异常），后台 `gw-sign-redis-reconnect` 守护线程每 60s 重连，恢复后清空缓存强制读新值。 |
+| 5 | **公钥来源与刷新** | 主源 = `BaseDataCache` ← Admin `springCloud` 插件 config 的 `gw.springcloud.app-key.{appKey}` 字段（值为该 BIZ 公钥）。部署 jar 的 `AdminConfigBizPublicKeyProvider` 扫描该 config 取得各 appKey 公钥；后台 `gw-sign-adminconfig-refresh` 守护线程按刷新周期重读，**不依赖 Redis**、亦不读 `enabled` 字段（"禁用"=从 config 移除对应的 `gw.springcloud.app-key.*` 字段）。 |
 | 6 | **单飞缓存防惊群** | `ReentrantLock.tryLock()`：缓存失效时仅一个线程执行 `refresh()`，其余线程读旧值；无旧值时阻塞并 double-check。缓存 TTL 默认 30s，故障窗口 3s 短 TTL 重试。 |
 | 7 | **防重放窗口** | `TIMESTAMP_TOLERANCE_SECONDS = 300`（±5 分钟），与本仓库 `PaySignVerifier.checkTimestamp` 对齐；超窗直接 `fail401`。 |
 | 8 | **body 单次消费** | WebFlux body 仅可读一次，SignPlugin 验签读 body 与 DividePlugin 转发读 body 冲突，需在 SignPlugin 之前启用 `CacheRequestBodyPlugin` 缓存请求体（详见 7.1）。 |

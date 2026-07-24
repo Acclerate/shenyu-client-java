@@ -92,6 +92,13 @@
             <version>4.11.0</version>
             <scope>test</scope>
         </dependency>
+        <!-- 测试：spring-test 提供 MockServerWebExchange / MockServerHttpRequest（网关验签集成测试） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-test</artifactId>
+            <version>${spring.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

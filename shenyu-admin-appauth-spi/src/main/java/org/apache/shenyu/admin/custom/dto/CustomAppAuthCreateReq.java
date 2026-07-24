@@ -34,12 +34,17 @@ public class CustomAppAuthCreateReq {
     private String appSecret;
 
     /**
-     * 是否启用。验签需要 enabled=true；为空时默认 true。
+     * 是否启用。验签需要 enabled=true。
+     *
+     * <p>PATCH 语义：null=未传该字段。创建时默认 true；<b>更新时保留已存在记录的现值</b>
+     * （防止「只轮换公钥」把已禁用的 appKey 静默重新启用）。
      */
     private Boolean enabled;
 
     /**
-     * 是否开启路径白名单。本方案不开白名单（所有走 sign 的路径都验签），为空时默认 false。
+     * 是否开启路径白名单。本方案不开白名单（所有走 sign 的路径都验签）。
+     *
+     * <p>PATCH 语义：null=未传该字段。创建时默认 false；更新时保留已存在记录的现值。
      */
     private Boolean open;
 }

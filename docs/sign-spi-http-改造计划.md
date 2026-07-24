@@ -441,7 +441,7 @@ curl http://127.0.0.1:8470/sign/public-key/biz001
 
 ---
 
-_相关文档：docs/sign-redis-rotation-runbook.md、docs/sign-plugin-验证手册.md、docs/shenyu-springcloud-2.6.1-分析总结.md_
+_相关文档：docs/sign-plugin-验证手册.md、docs/shenyu-springcloud-2.6.1-分析总结.md_
 
 
 
