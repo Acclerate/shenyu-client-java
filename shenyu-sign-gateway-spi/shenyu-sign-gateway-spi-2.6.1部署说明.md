@@ -1,6 +1,7 @@
 # shenyu-sign-gateway-spi 部署说明
 
 > 解法A核心工程：网关侧 RSA 验签 SPI，验签上移到 SignPlugin。
+> 公钥来源 = shenyu-admin 的 `springCloud` 插件 `config` → 经 WebSocket 同步进 bootstrap 的 `BaseDataCache` map 缓存 → SPI 轮询读取。**不依赖 Redis**。
 
 ## 打包与镜像构建
 
@@ -9,192 +10,149 @@
 ```bash
 cd D:\privategit\github\shenyu-client-java\shenyu-sign-gateway-spi
 
-# 方式1：手动分步
-mvn clean package -DskipTests
-docker build -t shenyu-bootstrap:2.6.1-sign-redis-latest .
+# 1. 打 SPI jar（依赖全部 provided，产物为薄 jar）
+mvn clean package
+#   产物：target/shenyu-sign-gateway-spi-2.6.1.jar
 
-# 方式2：一键脚本（推荐）
-bash build-image.sh
+# 2. 把 jar 暂存到 Dockerfile 构建上下文的 staging 目录
+#    （真实 Dockerfile 位于 D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\Dockerfile，
+#     其 COPY 源是相对该目录的 /shenyu-bootstrap/ext-lib/shenyu-sign-gateway-spi-2.6.1.jar）
+cp target/shenyu-sign-gateway-spi-2.6.1.jar \
+   D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\shenyu-bootstrap\ext-lib\
+
+# 3. 在 shenyu-2.6.1 目录下构建镜像（build context 根 = 该目录）
+cd D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1
+docker build -t shenyu-bootstrap:2.6.1-sign-latest --build-arg BUILD_DATE="$(date +%FT%T)" .
 ```
 
 **产物**：
-- `target/shenyu-sign-gateway-spi-2.6.1.jar`（SPI 主 jar，shade 后包含重定位的依赖）
-- `shenyu-bootstrap:2.6.1-sign-redis-latest`（Docker 镜像）
-- `shenyu-bootstrap:2.6.1-sign-redis-YYYYMMDD-HHMMSS`（带时间戳的 pin tag，可回滚）
+- `target/shenyu-sign-gateway-spi-2.6.1.jar`（SPI 主 jar；依赖全部 `provided`，由 bootstrap 容器提供，无需 shade）
+- `shenyu-bootstrap:2.6.1-sign-latest`（Docker 镜像，与 docker-compose 引用的 tag 一致）
 
-**依赖说明**（探查 `apache/shenyu-bootstrap:2.6.1` 镜像结论）：
-- 镜像内已有 `lettuce-core-6.1.10.RELEASE.jar`，SPI 的 lettuce 依赖改为 `<scope>provided</scope>`
-- SPI 使用 Lettuce 原生 API 直接连接 Redis（非 Spring Data Redis）
-- 无需拷贝 `target/lib/*.jar`（Dockerfile 仅 COPY 主 jar）
+**Dockerfile 集成机制**：
+- `FROM apache/shenyu-bootstrap:2.6.1`，`COPY /shenyu-bootstrap/ext-lib/shenyu-sign-gateway-spi-2.6.1.jar /opt/shenyu-bootstrap/ext-lib/`
+- SPI 通过 `META-INF/spring.factories` 声明的 `PayRsaSignConfiguration`（`@Configuration`）自动装配，`ext-lib/` 由 ShenYu 的 `ShenyuLoaderService` 加载。实测运行正常、日志干净（无 `ApplicationContext has not been refreshed yet` 噪声）。
+- 注意：jar 必须先暂存到 `shenyu-bootstrap/ext-lib/`（Dockerfile 的 COPY 源），构建从 `shenyu-2.6.1/` 目录执行。
 
 ## 部署到 Docker 网关
 
 ### 镜像化部署（推荐，K8s 迁移友好）
 
-> 目的：SPI jar 打进镜像，消除 ext-lib bind mount 依赖，避免 K8s `subPath` 挂载陷阱和 PVC 拓扑强绑定（详见 Pod 漂移分析文档）。
+> SPI jar 打进镜像，消除 ext-lib bind mount 依赖，避免 K8s `subPath` 挂载陷阱和 PVC 拓扑强绑定（详见 Pod 漂移分析文档）。
 
-**1. 修改 docker-compose.yaml**（完整 patch 见 `docker-compose-shenyu-bootstrap-patch.yaml`）
+**1. docker-compose.yaml 关键片段**
 
 ```yaml
 services:
   shenyu-bootstrap:
-    image: shenyu-bootstrap:2.6.1-sign-redis-latest  # 改为自定义镜像
+    image: shenyu-bootstrap:2.6.1-sign-latest   # 自定义镜像（SPI 已烤进 ext-lib/）
     volumes:
       - "./shenyu-bootstrap/conf:/opt/shenyu-bootstrap/conf"
-      # 删除：- "./shenyu-bootstrap/ext-lib:/opt/shenyu-bootstrap/ext-lib"
       - "./shenyu-bootstrap/logs:/opt/shenyu-bootstrap/logs"
+      # 无需 ext-lib bind mount，也无需任何 Redis 相关配置
     environment:
-      # 新增 Redis 公钥相关环境变量（见下一节）
-      - GW_SIGN_KEY_SOURCE=redis
-      - GW_SIGN_REDIS_HOST=host.docker.internal
-      # ... 其他环境变量
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Linux Docker 兼容
+      - TZ=Asia/Shanghai
+      - shenyu.sync.websocket.urls=ws://shenyu-admin-261:9095/websocket
+      - GW_SPRINGCLOUD_REFRESH_INTERVAL_SECONDS=30   # BaseDataCache 轮询周期（秒，下限 5）
 ```
 
-**2. 启动/重启**
+**2. 启动/重启（同 tag 重建镜像后必须 force-recreate）**
 
 ```bash
 cd D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1
-docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 up -d shenyu-bootstrap
+docker compose -f docker-compose-ShenYu.yaml up -d --force-recreate shenyu-bootstrap
 ```
 
-### Redis 公钥配置（支持动态轮换）
+### 公钥来源：ShenYu 插件数据（BaseDataCache）
 
-`PayRsaSignService` 通过 `DynamicBizPublicKeyProvider` 取公钥，支持 classpath / Redis 双源 + 三级兜底 + 60s 自动重连。
+`PayRsaSignService` 通过 `AdminConfigBizPublicKeyProvider` 取公钥，公钥源 = admin 的 `springCloud` 插件 `config`：
 
-**环境变量字典**（`GW_SIGN_*` → `gw.sign.*` 通过 Spring relaxed binding 映射）：
+- SPI 读取 `BaseDataCache.getInstance().obtainPluginData("springCloud").getConfig()`（JSON）。
+- 解析顶层 key `gw.springcloud.app-key.<appKey>` = PEM 公钥，构建 `appKey → PublicKey` 映射。
+- 后台守护线程 `gw-sign-adminconfig-refresh` 每 `GW_SPRINGCLOUD_REFRESH_INTERVAL_SECONDS`（默认 30s，下限 5s）轮询一次，`volatile + unmodifiableMap` 原子发布；热路径 `currentKey(appKey)` 仅 `volatile 读 + HashMap.get`，零 I/O 零锁。
+- **优雅降级**：config 为 null/空、非法 JSON、或解析出 0 条有效公钥时，保留旧缓存（不放大为全站 401）。撤销某 appKey 后，下一次有效同步自动移除（最长 30s 延迟）。
+
+**环境变量**：
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `GW_SIGN_KEY_SOURCE` | `classpath` | `redis` \| `classpath` |
-| `GW_SIGN_CLASSPATH_PUBLIC_KEY` | `biz-public-key.pem` | classpath 模式时 PEM 路径 |
-| `GW_SIGN_REDIS_HOST` | `127.0.0.1` | Redis host（容器内访问宿主机用 `host.docker.internal`） |
-| `GW_SIGN_REDIS_PORT` | `6379` | Redis port |
-| `GW_SIGN_REDIS_PASSWORD` | `` | Redis password（留空=无密码） |
-| `GW_SIGN_REDIS_DATABASE` | `0` | Redis database |
-| `GW_SIGN_REDIS_TIMEOUT-MS` | `1500` | Redis 连接超时（毫秒） |
-| `GW_SIGN_REDIS_BIZ_PUBLIC_KEY_KEY` | `shenyu:sign:biz-public-key.pem` | Redis 中存储 PEM 的 key |
-| `GW_SIGN_CACHE_TTL_SECONDS` | `30` | 本地缓存 TTL（秒） |
-| `GW_SIGN_CACHE_FAILURE_RETRY_SECONDS` | `3` | 刷新失败后的短重试窗口（秒） |
-| `GW_SIGN_CACHE_ALLOW_STALE_ON_REFRESH_FAILURE` | `true` | 刷新失败时继续使用旧公钥 |
+| `GW_SPRINGCLOUD_REFRESH_INTERVAL_SECONDS` | `30` | BaseDataCache 轮询周期（秒，下限 5） |
 
-**docker-compose 环境变量示例**：
+> 说明：本方案**没有任何 `GW_SIGN_REDIS_*` / `GW_SIGN_KEY_SOURCE` 环境变量**。公钥全部来自 admin 下发，无需在 bootstrap 侧配置任何公钥来源。
 
-```yaml
-environment:
-  - GW_SIGN_KEY_SOURCE=redis
-  - GW_SIGN_REDIS_HOST=host.docker.internal
-  - GW_SIGN_REDIS_PORT=6379
-  - GW_SIGN_REDIS_DATABASE=0
-  - GW_SIGN_REDIS_PASSWORD=
-  - GW_SIGN_REDIS_BIZ_PUBLIC_KEY_KEY=shenyu:sign:biz-public-key.pem
-  - GW_SIGN_CACHE_TTL_SECONDS=30
-  - GW_SIGN_CACHE_FAILURE_RETRY_SECONDS=3
-  - GW_SIGN_CACHE_ALLOW_STALE_ON_REFRESH_FAILURE=true
-  - TZ=Asia/Shanghai
-extra_hosts:
-  - "host.docker.internal:host-gateway"  # Linux Docker 需显式配置
+### 公钥注入（写入 admin plugin.config → 同步进 BaseDataCache）
+
+公钥经 admin 落库到 `plugin(name='springCloud').config`，键名 `gw.springcloud.app-key.<appKey>`，值为 PEM。两种注入方式：
+
+**方式1：erpm-pay-center 推送（生产链路）**
+- 调 `POST /api/v1/sign/push-all-public-keys`（`SignFacadeService#pushAllPublicKeys`）。
+- 内部从 `erpm_pay_center.pay_app_config` 读 `app_key` + `app_public_key`，经 admin REST（GET/PUT `/plugin`）写入 `springCloud.config`。
+
+**方式2：直改数据库（本地测试）**
+```sql
+-- 先 SELECT 现有 config 合并，勿覆盖已有字段
+UPDATE shenyu_261.plugin
+SET config='{...,"gw.springcloud.app-key.biz001":"-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"}'
+WHERE name='springCloud';
 ```
-
-### Redis 公钥初始化
-
-**方式1：使用初始化脚本（推荐）**
-
-```bash
-# 假设 Redis 容器名为 shenyu-redis
-bash shenyu-sign-gateway-spi/scripts/init-redis-public-key.sh shenyu-redis
-```
-
-**方式2：手动写入（注意保留换行符）**
-
-```bash
-# 方式2a：从 jar 内默认 PEM 写入
-docker exec -i shenyu-redis redis-cli -x SET shenyu:sign:biz-public-key.pem \
-  < shenyu-sign-gateway-spi/src/main/resources/biz-public-key.pem
-
-# 方式2b：从自定义 PEM 文件写入
-docker exec -i shenyu-redis redis-cli -x SET shenyu:sign:biz-public-key.pem \
-  < /path/to/custom-biz-public-key.pem
-```
-
-**验证写入成功**：
-
-```bash
-# 验证内容与源文件一致
-docker exec shenyu-redis redis-cli --no-raw GET shenyu:sign:biz-public-key.pem \
-  | diff - shenyu-sign-gateway-spi/src/main/resources/biz-public-key.pem
-```
-
-**TTL 策略**：Redis key **不设 TTL**（永久）。轮换通过 versioned-key（`.v1`、`.v2`）+ 环境变量切换实现。
+> 直改 DB 后需 `docker compose ... restart shenyu-admin`，admin 重启从 DB 重载 → WebSocket 下发 → bootstrap `BaseDataCache` 更新（≤30s 生效）。
 
 ### 启动验证
 
 ```bash
-cd D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1
-docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 restart shenyu-bootstrap
-```
-
-### 4. 验证加载
-
-```bash
-# 查看启动日志，确认：
-# 1. [GW-Sign] 公钥源已启用 Redis 模式 redis=host.docker.internal:6379 db=0 key=shenyu:sign:biz-public-key.pem
+docker logs -f shenyu-bootstrap-261 | grep -i "GW-Sign"
+# 期望：
+# 1. [GW-Sign] 同步完成：N 条公钥生效
 # 2. [GW-Sign] PayRsaSignService 已注册，替换默认 ComposableSignService
-docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 logs -f shenyu-bootstrap | grep "GW-Sign"
+# 且无 "ApplicationContext has not been refreshed yet" 噪声（证明 jar 在 lib/）
 ```
 
-### 5. Admin 后台启用 sign 插件
+### Admin 后台启用 sign 插件
 
 1. 打开 http://localhost:9096，登录 admin / 1qaz!QAZ
-2. 插件管理 -> 找到 `sign` 插件 -> 启用
-3. 基础配置 -> 认证管理 -> 新增：
-   - 应用名称：`sign-demo-pay`（与 PAY 注册的 appName 一致）
-   - appKey：`biz-to-pay`（自定义）
-   - appSecret：`placeholder`（RSA 方案不用对称密钥，填占位值）
-4. sign 插件 Selector：匹配 `/pay-demo/v3/pay/**`，关联 appKey `biz-to-pay`
-5. sign 插件 Rule：启用签名校验
+2. 插件管理 → `sign` 插件 → 启用
+3. sign 选择器：匹配业务路径（如 `/springcloud-demo/**`）
+4. sign 规则：启用签名校验
+
+## 签名协议
+
+| 请求头 | 说明 |
+|---|---|
+| `X-Pay-App-Key` | appKey（对应 `gw.springcloud.app-key.<appKey>`） |
+| `X-Pay-Timestamp` | epoch 毫秒；网关 ÷1000 比对当前秒，容差 ±300s |
+| `X-Pay-Nonce` | 随机串 |
+| `X-Pay-Sign` | `SHA256withRSA` 签名 → 标准 Base64（单行） |
+
+待签名串（5 行，每行以 `\n` 结尾）：`METHOD\nURL\nTS\nNONCE\nBODY\n`（URL=网关收到的原始路径，带 contextPath、GET 含 query；GET 的 BODY 段为空串）。
+
+> **重要（实测）**：当前 ShenYu sign 插件在 body 被 WebFlux 完全缓存前即调用 `PayRsaSignService.signatureVerify(exchange)`，传入的 `requestBody` 始终为空串。因此**无论 GET 还是 POST，签名串的 BODY 段都按空串处理**。客户端对 POST 请求也用空 BODY 段加签（实际请求体照常发送）。判定与排查以 `X-Pay-Sign` 对应的签名串第 5 行为空为准。
 
 ## 故障降级行为
 
-| 场景 | 行为 | 日志关键词 | 验证结果 |
-|---|---|---|---|
-| **Redis 正常** | 30s TTL 缓存 + 定期刷新 | `公钥刷新成功 source=redis` | 正常 |
-| **Redis key 不存在** | Redis 可用但 GET 返回 null → 降级 classpath | `Redis 与 stale 均不可用，降级到 classpath PEM` | 正常（用 jar 内 PEM） |
-| **Redis 启动期不可达** | 构造期降级 classpath + 60s 重连 | `Redis 连接失败，已降级到 classpath` | 正常（用 jar 内 PEM） |
-| **Redis 运行期故障** | stale 兜底（30s）→ 降级 classpath → 60s 重连 | `Redis 重连失败` → `降级到 classpath PEM` → `Redis 已恢复` | 正常（先 stale 后 classpath） |
-| **全部失败（Redis+classpath）** | 抛异常 → 验签失败 | 验签异常日志 | HTTP 401 |
+| 场景 | 行为 | 验证结果 |
+|---|---|---|
+| **admin 同步正常** | BaseDataCache 命中，30s 内公钥生效 | 正常 |
+| **plugin.config 无该 appKey** | 热路径 `currentKey` 未命中 → 验签失败 | HTTP 401 |
+| **config 为空/非法 JSON/0 条有效公钥** | 保留旧缓存（优雅降级），不放大为全站 401 | 用旧公钥继续验签 |
+| **admin/WebSocket 故障** | BaseDataCache 保留旧值兜底 | 用旧值继续，重连后自动刷新 |
+| **cacheMap 尚未初始化** | 首次同步未完成 | HTTP 401（provider not initialized） |
 
 **关键点**：
-- Redis 连接失败 **不会导致网关启动失败**（构造期容错）
-- 健康检查应依赖 `/actuator/health`，而非依赖 Redis 可达性
+- admin 不可达 **不会导致网关启动失败**（SPI 构造期不阻塞，后台线程异步同步）。
+- 健康检查依赖 `/actuator/health`，而非依赖 admin 可达性。
 
 ## 回滚流程
 
 ### 镜像回滚
 
 ```bash
-# 回滚到上一个 pin tag
-docker tag shenyu-bootstrap:2.6.1-sign-redis-20260701-120000 shenyu-bootstrap:2.6.1-sign-redis-latest
-docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 up -d shenyu-bootstrap
+docker tag shenyu-bootstrap:2.6.1-sign-20260701-120000 shenyu-bootstrap:2.6.1-sign-latest
+docker compose -f docker-compose-ShenYu.yaml up -d --force-recreate shenyu-bootstrap
 ```
 
-### 切换回 classpath 模式
+### 公钥回滚
 
-```yaml
-environment:
-  - GW_SIGN_KEY_SOURCE=classpath  # 改回 classpath
-  # 注释掉 GW_SIGN_REDIS_* 相关变量
-```
-
-### Redis 公钥回滚
-
-```bash
-# 回滚到上一个版本（假设用 versioned-key 方案）
-docker exec shenyu-redis redis-cli RENAME shenyu:sign:biz-public-key.pem.v2 shenyu:sign:biz-public-key.pem.v1
-# 修改环境变量 GW_SIGN_REDIS_BIZ_PUBLIC_KEY_KEY=shenyu:sign:biz-public-key.pem.v1
-docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 up -d shenyu-bootstrap
-```
+重新调用推送接口，或直改 DB 覆盖 `plugin(springCloud).config` 中对应 `gw.springcloud.app-key.<appKey>`，再 `restart shenyu-admin` 触发同步。
 
 ## 解法A原理
 
@@ -203,140 +161,99 @@ docker-compose -f docker-compose-ShenYu.yaml -p shenyu261 up -d shenyu-bootstrap
   SignPlugin(50) → RequestPlugin(100) → ContextPathPlugin(150) → DividePlugin(200)
 
 SignPlugin 执行时：
-  - 路径还是网关收到的原始路径：/pay-demo/v3/pay/transactions/jsapi（带 contextPath）
-  - 与 BIZ 加签时用的路径完全一致
-  → 验签天然匹配
+  - 路径还是网关收到的原始路径：/springcloud-demo/order/findById?id=1（带 contextPath）
+  - 与业务方加签时用的路径完全一致 → 验签天然匹配
 
 ContextPathPlugin 执行时（SignPlugin 之后）：
-  - 剥离 contextPath：/pay-demo/v3/pay/... → /v3/pay/...
-  - PAY 收到的路径不带 contextPath
-  - 但此时验签已在 SignPlugin 完成，PAY 不需要再验签
+  - 剥离 contextPath → 后端收到 /order/findById
+  - 验签已在 SignPlugin 完成，后端无需再验签
 ```
 
-
-好的，现在我已经收集了足够的信息来构建一个深度技术分析。
-
 ---
 
-# 挂载自定义 JAR 导致 Pod 漂移到其他 Node 的深层次原因分析
+# v2.0 部署补充（app_auth 数据源，2026-07-24）
 
-## 一、核心概念纠偏：Pod 为什么会“漂移”？
+> **本章节内容覆盖上文 v1.x 的"公钥注入方式"与"公钥回滚"描述。**
+> v2.0 起，公钥数据源从 `plugin.config` JSON 切换为 `app_auth` 表，SPI 通过 websocket push 实时接收，零轮询。
 
-首先需要明确：**Kubernetes 本身不会主动“移动”一个正在运行的 Pod**。Pod 是 K8s 的最小调度单元，一旦绑定到某个 Node，其生命周期就固定在该 Node 上。
+## 数据源切换
 
-所谓的 **“Pod 漂移”**，本质上是一个 **“旧 Pod 死亡/被驱逐 + 控制器重建新 Pod + 调度器将其分配到新 Node”** 的三阶段过程。
+| 维度 | v1.x（plugin_config） | v2.0（app_auth） |
+|---|---|---|
+| 公钥存储 | `plugin(name='springCloud').config` 的 `gw.springcloud.app-key.<appKey>` | `app_auth.app_secret`（VARCHAR 扩到 4096） |
+| 同步通路 | PLUGIN group | **APP_AUTH group** |
+| 网关侧缓存 | `BaseDataCache.PLUGIN_MAP` + 30s 轮询 | `SignCacheBizPublicKeyProvider` 自建 `ConcurrentHashMap`，websocket push 秒级实时 |
+| 就绪检查 | 无 | `AppAuthHealthIndicator` + K8s readinessProbe |
+| 实时性 | 30s 延迟 | 秒级（websocket 推送延迟） |
 
+## 数据库变更（前置，DBA 执行）
+
+执行 `db/upgrade/2.6.1-app-auth-app-secret-to-4096-mysql.sql`：
+```sql
+ALTER TABLE `app_auth` MODIFY COLUMN `app_secret` VARCHAR(4096)
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL
+  COMMENT '验签凭证（承载 RSA 公钥 PEM）';
 ```
-[旧Pod异常] → (OOMKilled / Evicted / Preempted / 节点故障)
-       ↓
-[控制器重建] → Deployment/StatefulSet ReplicaSet 发现副本数不足，创建新 Pod
-       ↓
-[调度器决策] → Scheduler 根据资源、亲和性、污点等重新选择最优 Node (发生"漂移")
+> ⚠️ 勿误改 `alert_receiver.app_secret`（无关表）。
+
+## ⚠️ 运维铁律：禁止直改 app_auth 表
+
+**所有 app_auth 表的增删改（新增/修改公钥、启用/禁用、删除 appKey）必须通过 ShenYu Admin REST API 进行，严禁任何形式的直接数据库操作（SQL、客户端工具）。**
+
+**原因**：直接改库不触发 admin 的 `publishEvent`，网关侧缓存保持陈旧。更严重的是——即便事后触发全量同步（`syncData`），ShenYu 原生 REFRESH 是"逐条 put 覆盖，不删 key"，**已删除的 appKey 公钥会在网关内存里永久残留，仍能验签通过，直到网关重启**。这是安全漏洞。
+
+**后果**：违反此约束的唯一恢复方法是重启所有 ShenYu 网关实例清空内存。
+
+## 公钥写入正确姿势（运维 / erpm-pay-center）
+
+| 接口 | 方法 | 评估 |
+|---|---|---|
+| `/appAuth/apply` | POST | ❌ 会用 `SignUtils.generateKey()` 覆盖 appSecret 为随机 UUID |
+| `/appAuth/createOrUpdate` | POST | ⚠️ id 为空时也会覆盖 |
+| **`/appAuth/updateDetail`** | POST AppAuthDTO | ✅ **推荐**，JSON body 可放任意长 PEM |
+| `/appAuth/updateSl` | GET | ❌ PEM 的 `\n`/`=`/`+` 在 URL 需编码 |
+
+**工作流**：先 `POST /appAuth/apply` 拿 appKey → 再 `POST /appAuth/updateDetail` 把 PEM 写进 appSecret 覆盖随机值 → admin 自动 websocket 推送到网关。
+
+## K8s 就绪探针配置（新增）
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /actuator/health
+    port: 9195
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
 ```
 
-**“挂载自定义 JAR”**（如 Java Agent、热插拔插件、外挂依赖包）正是触发这个链条第一环的**诱因**。
+**工作原理**：
+1. Pod 启动，websocket 尚未同步 → `AppAuthHealthIndicator` 返回 DOWN（`everSynced=false`）
+2. K8s 探针失败，Pod 不 Ready，不接流量
+3. admin 完成首次推送 → `everSynced=true` → HealthIndicator 返回 UP
+4. Pod Ready，开始接流量
 
----
+> 注：`everSynced` 首次置 true 后永不变 false（即便全量 REFRESH 清空数据源的亚秒级窗口内仍 true），避免 K8s 误摘流。详见设计方案 §D2。
 
-## 二、深层次原因全链路剖析
+## 环境变量变更
 
-### 原因链 1：JVM 内存模型与 Cgroup 限制的“认知错位”（最常见：OOMKilled）
+| 变量 | v1.x | v2.0 |
+|---|---|---|
+| `GW_SPRINGCLOUD_REFRESH_INTERVAL_SECONDS` | 30（轮询周期） | **已废弃**（零轮询，删除） |
+| `shenyu.sync.websocket.urls` | ws://admin/websocket | 不变 |
+| `shenyu.plugins.sign.enabled` | 默认 true | **必须保持 true**（禁用则缓存不填充，方案失效） |
 
-这是生产环境中最典型、也最隐蔽的“漂移”原因。挂载自定义 JAR（尤其是 Java Agent / APM 探针 / 字节码增强工具）后，往往会引发**非堆内存（Off-Heap）**暴涨。
+## 公钥回滚（v2.0）
 
-#### 深层机制：
-1. **JVM 内存 ≠ 只有 Heap（堆）**：
-   - Java 进程总内存 = **Heap** + **Metaspace** + **Code Cache** + **Direct Memory** + **Thread Stacks** + **Native Memory (JNI/C++)**。
-   - `-Xmx` 只能限制 Heap，无法限制其他区域。
-2. **自定义 JAR 的副作用**：
-   - **Metaspace 膨胀**：如果自定义 JAR 使用了 CGLIB、ASM、ByteBuddy 等**字节码动态生成技术**（如自定义 Agent 拦截方法），会在运行时动态创建大量 Class，导致 Metaspace 无限膨胀。
-   - **Direct Memory 泄漏**：如果 JAR 中包含 Netty、NIO 相关的网络/存储组件，可能引发堆外内存泄漏。
-   - **JNI 内存泄漏**：如果 JAR 调用了底层 C/C++ 库（如加密、压缩算法），Native Memory 不受 JVM 管控。
-3. **Cgroup OOM 触发**：
-   - 当 `Java进程总内存` > K8s Pod 的 `resources.limits.memory` 时，Linux 内核的 Cgroup OOM Killer 会**直接 SIGKILL 杀掉 Java 进程**。
-   - 此时**没有 JVM 的 `OutOfMemoryError` 日志**，只会看到 Pod 状态变为 `OOMKilled`。
+由于旧实现已删除，回滚**不支持运行时切换数据源**，改用镜像版本回退：
 
-#### 漂移路径：
-`Pod OOMKilled` → `CrashLoopBackOff` → 如果触发了 Node 级别的 `MemoryPressure`，Kubelet 会直接 **Evict（驱逐）** 该 Pod → Deployment 重建 Pod → 调度器发现原 Node 内存紧张，将其调度到其他 Node → **表现为“漂移”**。
+1. **L1（推荐）**：docker-compose 切回旧镜像 tag（内含 v1.x SPI jar，读 `plugin.config`）。前提：迁移期间在 `plugin.config` 保留 `gw.springcloud.app-key.*` 双份数据。
+2. **L2（兜底）**：DDL 回列到 VARCHAR(128)，但回滚前必须清空所有 PEM 公钥（否则截断）。
 
----
+## 滚动更新流程
 
-### 原因链 2：存储卷挂载拓扑与 `subPath` 陷阱（ConfigMap/PVC 更新导致）
-
-如果你的自定义 JAR 是通过 **ConfigMap、Secret 或 PVC** 挂载到容器中的，K8s 的存储机制会埋下隐患。
-
-#### 深层机制：
-1. **ConfigMap `subPath` 挂载陷阱**：
-   - 为了只挂载单个 JAR 文件而不覆盖目标目录下的其他文件，通常会使用 `subPath`：
-     ```yaml
-     volumeMounts:
-       - name: custom-jar
-         mountPath: /app/lib/my-plugin.jar
-         subPath: my-plugin.jar
-     ```
-   - **致命缺陷**：K8s 的机制是，**当 ConfigMap 更新时，使用 `subPath` 挂载的容器无法自动感知文件更新**。
-   - **人为干预触发漂移**：为了让新 JAR 生效，运维人员通常会执行 `kubectl delete pod` 或触发 Rolling Update。此时新 Pod 重建，调度器可能根据当前的集群资源水位，将其分配到其他 Node。
-2. **PVC 的 RWO（ReadWriteOnce）拓扑限制**：
-   - 如果自定义 JAR 放在 PVC 中（如云盘），且访问模式为 `ReadWriteOnce`。当原 Node 发生网络抖动或 Kubelet 假死时，旧 Pod 卡在 `Terminating` 状态，Volume 无法卸载。
-   - 控制器创建的新 Pod 无法挂载到原 Node（或一直 Pending），某些存储插件（CSI）在超时后可能会强制 Detach 并允许挂载到其他 Node，从而导致 **“被动漂移”**。
-
----
-
-### 原因链 3：Init Container 资源争抢与探针超时（启动阶段崩溃）
-
-很多团队使用 **Init Container + EmptyDir** 的模式来下载或拷贝自定义 JAR（例如从 OSS/Nacos 拉取最新插件）。
-
-#### 深层机制：
-1. **Init Container 拖慢启动**：下载大体积 JAR 包或进行解压、校验，耗时过长。
-2. **主容器启动探针（Startup Probe）超时**：
-   - 挂载自定义 JAR 后，JVM 启动时需要加载额外的类、执行 Agent 的 `premain` 方法，导致**启动时间翻倍**。
-   - 如果 K8s 的 `startupProbe` 或 `livenessProbe` 配置的时间不够，Kubelet 会认为容器卡死，不断重启容器。
-3. **节点资源耗尽引发驱逐**：
-   - 频繁的探针失败和重启会导致该 Node 上的 CPU/IO 飙升。如果该 Node 本身资源紧张，Kubelet 会根据 **QoS 等级（Burstable/BestEffort）** 驱逐该 Pod。
-   - 重建后的 Pod 被调度到资源更健康的 Node。
-
----
-
-### 原因链 4：安全沙箱与 Seccomp/AppArmor 拦截
-
-自定义 JAR 如果包含**不安全的系统调用**（如 JNI 调用底层驱动、动态修改内核参数、不规范的 `/tmp` 读写），可能会触发 K8s 节点的安全策略。
-
-#### 深层机制：
-- 某些 Node 配置了 **Seccomp Profile** 或 **AppArmor/SELinux**。自定义 JAR 的某些 Native 操作被拦截，导致 JVM 直接 Segmentation Fault（段错误）崩溃。
-- 这种崩溃表现为 `Exit Code 139` 或 `134`。
-- 如果 DaemonSet 或控制器检测到该 Node 环境不兼容（通过自定义的准入控制器或健康检查），可能会通过 **Taint/Toleration（污点/容忍）** 机制，将该 Pod 驱逐并调度到没有该安全限制的其他 Node。
-
----
-
-## 三、如何排查与定位？
-
-如果你正在经历这个问题，请按以下“四步法”进行排查：
-
-| 步骤 | 排查命令 / 动作 | 关注点 |
-| :--- | :--- | :--- |
-| **1. 查死因** | `kubectl get pod <old-pod-name> -o yaml` (或查看历史事件) | 看 `Last State` 中的 `Reason` 是 `OOMKilled`、`Evicted` 还是 `Error`。 |
-| **2. 查驱逐** | `kubectl get events --field-selector involvedObject.name=<pod-name>` | 寻找 `The node was low on resource: [memory]` 或 `DiskPressure` 等 Kubelet 驱逐事件。 |
-| **3. 查内存** | 进入容器执行 `jcmd <pid> VM.native_memory summary` | 开启 **NMT (Native Memory Tracking)**，对比挂载自定义 JAR 前后的堆外内存（Metaspace/Internal/Symbol）变化。 |
-| **4. 查挂载** | `kubectl describe pod <new-pod-name>` | 检查 Volume 挂载方式，确认是否使用了 `subPath`，以及 ConfigMap/PVC 的更新策略。 |
-
----
-
-## 四、终极防御方案（Best Practices）
-
-1. **内存隔离与限制（针对 OOM 漂移）**：
-   - **必须开启 NMT**：在 `JAVA_OPTS` 中加入 `-XX:NativeMemoryTracking=detail`，方便排查堆外泄漏。
-   - **限制 Metaspace**：明确设置 `-XX:MaxMetaspaceSize=256m`（根据实际评估），防止字节码增强工具吃光内存。
-   - **合理设置 Limit**：Pod 的 `limits.memory` 至少应为 JVM `-Xmx` 的 **1.5 倍 到 2 倍**，为堆外内存和 OS Page Cache 留出余量。
-   - **开启容器感知**：确保使用 JDK 8u191+ 或 JDK 11+，并开启 `-XX:+UseContainerSupport`，让 JVM 正确识别 Cgroup 限制。
-
-2. **优雅挂载策略（针对存储漂移）**：
-   - **放弃 `subPath`**：尽量将自定义 JAR 打包进基础镜像，或者使用 **Init Container 将 JAR 拷贝到 EmptyDir** 中，主容器挂载整个 EmptyDir 目录。这样既避免了 `subPath` 不更新的坑，又解耦了存储拓扑。
-   - **使用 OCI Image Volume (K8s 1.31+)**：如果是较新的 K8s 集群，可以将 JAR 打包成 OCI 镜像，使用 `image` 类型的 Volume 直接挂载，这是目前最优雅的外挂依赖方案。
-
-3. **探针与启动优化（针对启动崩溃）**：
-   - 增加 `startupProbe` 的 `failureThreshold * periodSeconds`，给加载了自定义 JAR 的 JVM 足够的预热时间（如 3-5 分钟）。
-
----
-
-### 总结
-“挂载自定义 JAR 导致 Pod 漂移”的表象下，**90% 的情况是自定义 JAR 引入了堆外内存泄漏或 Metaspace 膨胀，导致触碰了 K8s 的 Cgroup 内存天花板，触发了 OOMKilled 或 Kubelet 驱逐**。剩下的 10% 则与 K8s 的 `subPath` 挂载缺陷或 PVC 拓扑强绑定有关。解决的核心在于**打通 JVM 内存模型与 K8s Cgroup 资源边界的认知壁垒**。
+1. 发布含 v2.0 SPI 的镜像
+2. K8s 逐个启动新 Pod，新 Pod 因 readinessProbe 失败保持 NotReady
+3. admin 完成数据推送（秒级到十几秒）
+4. 新 Pod Ready，接流量；K8s 终止旧 Pod

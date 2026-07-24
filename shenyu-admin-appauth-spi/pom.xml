@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ shenyu-admin 侧 app_auth 扩展 SPI 工程。
+  ~
+  ~ 背景：ShenYu 2.6.1 admin 原生 REST 接口无法用「指定 appKey」创建 app_auth 记录
+  ~   （apply 随机覆盖 appKey、响应不回传、updateDetail 不能改 app_key，四重硬约束）。
+  ~ 本扩展 jar 在 admin 进程内通过 ext-lib 加载，注入 AppAuthMapper + ApplicationEventPublisher，
+  ~ 暴露 POST /appAuth/customCreate 端点：用入参 appKey + appSecret(PEM) upsert app_auth 记录，
+  ~ 并手动 publishEvent(DataChangedEvent) 触发 websocket 推送到网关 SignAuthDataCache。
+  ~
+  ~ 打成 jar 放到 shenyu-admin/ext-lib/，由 entrypoint.sh 拼进 JVM 启动 classpath，
+  ~ Spring 启动期扫描 META-INF/spring.factories 装配本工程 @Configuration。
+  ~
+  ~ 设计原则（同 shenyu-sign-gateway-spi）：
+  ~   1. Java 1.8，禁用 var（admin 镜像 JDK 8）
+  ~   2. 禁用 @Component，所有 Bean 用 @Bean 在 @Configuration 声明（admin 主类包扫 org.apache.shenyu.admin，
+  ~      虽能扫到本包，但显式 @Bean 更清晰且与 sign-spi 一致）
+  ~   3. 包名 org.apache.shenyu.admin.custom，加 .custom 后缀避免冒充官方包（split package 隐患）
+  ~   4. 所有依赖 provided（admin 镜像 lib/ 已含，ext-lib jar 只放扩展字节码）
+  ~   5. 不 shade（避免把 admin 已有类打进来造成 classpath 冲突）
+  -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.apache.shenyu</groupId>
+    <artifactId>shenyu-admin-appauth-spi</artifactId>
+    <version>2.6.1</version>
+    <packaging>jar</packaging>
+    <name>shenyu-admin-appauth-spi</name>
+
+    <properties>
+        <java.version>1.8</java.version>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <shenyu.version>2.6.1</shenyu.version>
+        <spring.version>5.3.31</spring.version>
+        <spring-boot.version>2.7.18</spring-boot.version>
+    </properties>
+
+    <dependencies>
+        <!--
+          shenyu-admin（provided，由 admin 容器提供）：AppAuthMapper / AppAuthDO / ShenyuAdminResult / DataChangedEvent。
+          exclusions 切断所有 RPC/注册中心传递依赖（etcd/nacos/zookeeper/consul/polaris/eureka/discovery/register），
+          它们是 grpc/netty 的来源，与本扩展功能（写 app_auth 表 + 触发 websocket 推送）完全无关。
+          运行时这些类由 admin 进程自己的 classpath 提供，不影响功能。
+        -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-admin</artifactId>
+            <version>${shenyu.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <!-- 注册中心 / 服务发现实现（拖入 grpc / netty / etcd / zookeeper 客户端）-->
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-discovery-etcd</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-discovery-eureka</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-discovery-nacos</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-discovery-zookeeper</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-register-common</artifactId>
+                </exclusion>
+                <!-- 数据同步 listener 实现（etcd/nacos/zookeeper/consul/polaris，拖入对应客户端 + grpc）-->
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-admin-listener-etcd</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-admin-listener-nacos</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-admin-listener-zookeeper</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-admin-listener-consul</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.shenyu</groupId>
+                    <artifactId>shenyu-admin-listener-polaris</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!--
+          shenyu-common（provided）：AppAuthData / ConfigGroupEnum / DataEventTypeEnum / UUIDUtils。
+          exclusion 排除 reactor-netty（common 用于响应式工具，本扩展只用其中的纯 POJO/枚举/工具类，不需要 netty）。
+        -->
+        <dependency>
+            <groupId>org.apache.shenyu</groupId>
+            <artifactId>shenyu-common</artifactId>
+            <version>${shenyu.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.projectreactor.netty</groupId>
+                    <artifactId>reactor-netty-core</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.projectreactor.netty</groupId>
+                    <artifactId>reactor-netty-http</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- Spring（provided，由 admin 容器提供）：@RestController / @Configuration / ApplicationEventPublisher -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>${spring.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <version>${spring.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- bean validation（provided，admin 已含）：@Valid / @NotBlank -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+            <version>2.0.2</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- lombok（provided，仅编译期） -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.30</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- 测试：JUnit 5 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.9.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- 测试：Mockito（4.11.0 支持 JDK 8），用于单测 mock -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>4.11.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- SPI 主 jar（不 shade） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+            </plugin>
+            <!-- 单元测试（JUnit 5） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.1.2</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
