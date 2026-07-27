@@ -33,6 +33,7 @@ docker build -t shenyu-bootstrap:2.6.1-sign-latest --build-arg BUILD_DATE="$(dat
 - `FROM apache/shenyu-bootstrap:2.6.1`，`COPY /shenyu-bootstrap/ext-lib/shenyu-sign-gateway-spi-2.6.1.jar /opt/shenyu-bootstrap/ext-lib/`
 - SPI 通过 `META-INF/spring.factories` 声明的 `PayRsaSignConfiguration`（`@Configuration`）自动装配，`ext-lib/` 由 ShenYu 的 `ShenyuLoaderService` 加载。实测运行正常、日志干净（无 `ApplicationContext has not been refreshed yet` 噪声）。
 - 注意：jar 必须先暂存到 `shenyu-bootstrap/ext-lib/`（Dockerfile 的 COPY 源），构建从 `shenyu-2.6.1/` 目录执行。
+- **路径统一为 `ext-lib/`（2026-07-27 校正）**：早期实验版本曾把 jar COPY 到 `/opt/shenyu-bootstrap/lib/`，后统一为 `ext-lib/`（与部署目录 Dockerfile、shenyu-client-java 仓库 Dockerfile、admin 侧 ext-lib/ 路径全部对齐）。bootstrap 的 `start.sh` 已把 `${DEPLOY_DIR}/ext-lib/*` 加入 classpath，机制可靠。
 
 ## 部署到 Docker 网关
 
@@ -63,9 +64,11 @@ cd D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1
 docker compose -f docker-compose-ShenYu.yaml up -d --force-recreate shenyu-bootstrap
 ```
 
-### 公钥来源：ShenYu 插件数据（BaseDataCache）
+### 公钥来源：ShenYu 插件数据（BaseDataCache）⚠️ v1.x 历史描述，已被 v2.0（app_auth 数据源）覆盖
 
-`PayRsaSignService` 通过 `AdminConfigBizPublicKeyProvider` 取公钥，公钥源 = admin 的 `springCloud` 插件 `config`：
+> **本节描述的 `AdminConfigBizPublicKeyProvider` 已在 v2.0 删除**，替换为 `SignCacheBizPublicKeyProvider`（公钥源 = app_auth 表，websocket push 实时同步）。本节仅作历史背景保留，**实际部署以本文档末尾「v2.0 部署补充」章节为准**。
+
+`PayRsaSignService` 通过 ~~`AdminConfigBizPublicKeyProvider`~~（v1.x）取公钥，公钥源 = admin 的 `springCloud` 插件 `config`：
 
 - SPI 读取 `BaseDataCache.getInstance().obtainPluginData("springCloud").getConfig()`（JSON）。
 - 解析顶层 key `gw.springcloud.app-key.<appKey>` = PEM 公钥，构建 `appKey → PublicKey` 映射。
@@ -104,7 +107,7 @@ docker logs -f shenyu-bootstrap-261 | grep -i "GW-Sign"
 # 期望：
 # 1. [GW-Sign] 同步完成：N 条公钥生效
 # 2. [GW-Sign] PayRsaSignService 已注册，替换默认 ComposableSignService
-# 且无 "ApplicationContext has not been refreshed yet" 噪声（证明 jar 在 lib/）
+# 且无 "ApplicationContext has not been refreshed yet" 噪声（证明 jar 在 ext-lib/，由 ShenyuLoaderService 正确加载）
 ```
 
 ### Admin 后台启用 sign 插件

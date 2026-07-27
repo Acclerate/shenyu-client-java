@@ -59,7 +59,7 @@ mvn clean package
 # 产物：target/shenyu-admin-appauth-spi-2.6.1.jar （约 11KB 薄 jar）
 ```
 
-**产物校验**：jar 应只含 5 个自定义类 + spring.factories，无任何外部依赖类：
+**产物校验**：jar 应只含 5 个自定义类，**无 spring.factories**（装配走组件扫描，详见 README §2.2），无任何外部依赖类：
 
 ```bash
 jar tf target/shenyu-admin-appauth-spi-2.6.1.jar | grep "\.class$"
@@ -69,6 +69,7 @@ jar tf target/shenyu-admin-appauth-spi-2.6.1.jar | grep "\.class$"
 #   org/apache/shenyu/admin/custom/AppAuthCustomCreateService.class
 #   org/apache/shenyu/admin/custom/dto/CustomAppAuthCreateReq.class
 #   org/apache/shenyu/admin/custom/dto/CustomAppAuthCreateResp.class
+# 另：META-INF/maven/.../pom.properties 含构建时间戳，可用于核对版本
 ```
 
 ---
@@ -110,9 +111,13 @@ curl -X POST "http://localhost:9096/appAuth/customCreate" \
 docker exec mysql57 mysql -uroot -p<pwd> -e "SELECT app_key, LEFT(app_secret,30) FROM shenyu_261.app_auth WHERE app_key='TEST_SPI'"
 ```
 
-### 方式B：镜像化（K8s 友好，与 bootstrap SPI 一致）
+### 方式B：镜像化（推荐，K8s 友好，与 bootstrap SPI 一致）
 
-> 适用于 K8s 部署或消除 bind mount 依赖的场景。新建 admin Dockerfile，把 SPI jar 烤进镜像。
+> 适用于 K8s 部署或消除 bind mount 依赖的场景。新建 admin Dockerfile，把 **SPI jar + mysql-connector.jar 都烤进镜像**，彻底取消 ext-lib bind mount。
+>
+> **关键差异（2026-07-27 改造）**：早期版本方式B 只烤 SPI jar、保留 mysql-connector 的 bind mount，导致 K8s 迁移时仍需 hostPath/PVC 挂载 ext-lib。改造后两个 jar 都在镜像层，admin 容器**无任何 ext-lib bind mount 依赖**，与 bootstrap 完全对齐。
+>
+> **权衡**：mysql-connector 烤进镜像后，换 mysql 版本需重新 `docker build`（不能像 bind mount 那样直接替换 host 文件）。生产环境接受此代价以换取 K8s 迁移友好。
 
 **1. 准备 Dockerfile**（放在 compose 目录的 `shenyu-admin/` 下）：
 
@@ -122,48 +127,57 @@ FROM apache/shenyu-admin:2.6.1
 
 LABEL maintainer="shenyu-client-java"
 LABEL description="ShenYu 2.6.1 admin with appauth-spi (custom appKey create)"
+ARG BUILD_DATE
+LABEL build-date="${BUILD_DATE}"
 
-# SPI jar 烤进镜像 ext-lib（mysql-connector 仍走 bind mount，二者互不影响）
+# SPI jar + mysql-connector 都烤进镜像 ext-lib/，取消 bind mount（K8s 友好，与 bootstrap 一致）
+# entrypoint.sh 把 ext-lib/* 拼进 -classpath，两个 jar 都靠此机制加载
 COPY ext-lib/shenyu-admin-appauth-spi-2.6.1.jar /opt/shenyu-admin/ext-lib/
+COPY ext-lib/mysql-connector.jar /opt/shenyu-admin/ext-lib/
 ```
 
-**2. 暂存 jar 到构建上下文**：
+**2. 暂存 jar 到构建上下文**（SPI jar + mysql-connector.jar 都需在 build context 的 ext-lib/ 下）：
 
 ```bash
+# SPI jar（每次源码变更后重新 mvn package 再拷贝）
 cp D:\privategit\github\shenyu-client-java\shenyu-admin-appauth-spi\target\shenyu-admin-appauth-spi-2.6.1.jar \
    D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\shenyu-admin\ext-lib\
+
+# mysql-connector.jar（首次部署放入即可，除非换 mysql 版本否则不动）
+# 若部署目录已有则跳过；否则从官方下载放入：
+#   D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\shenyu-admin\ext-lib\mysql-connector.jar
 ```
 
-**3. 构建镜像**：
+**3. 构建镜像**（源码变更后必须 `--no-cache`，否则 COPY 层可能命中缓存不更新）：
 
 ```bash
 cd D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1\shenyu-admin
-docker build -t shenyu-admin:2.6.1-appauth-spi .
+docker build --no-cache -t shenyu-admin:2.6.1-appauth-spi .
 ```
 
-**4. 修改 docker-compose 引用新镜像**：
+**4. 修改 docker-compose 引用新镜像并取消 ext-lib bind mount**：
 
 ```yaml
 # docker-compose-ShenYu.yaml
 services:
   shenyu-admin:
-    image: shenyu-admin:2.6.1-appauth-spi   # 改为自定义镜像
+    image: shenyu-admin:2.6.1-appauth-spi   # 自定义镜像（SPI + mysql-connector 已烤进 ext-lib/）
     container_name: shenyu-admin-261
-    # volumes 保持不变；ext-lib bind mount 仍提供 mysql-connector，
-    # SPI jar 已在镜像里，bind mount 里的同名文件不会覆盖（镜像层在底层）
     volumes:
       - "./shenyu-admin/conf:/opt/shenyu-admin/conf"
       - "./shenyu-admin/logs:/opt/shenyu-admin/logs"
-      - "./shenyu-admin/ext-lib:/opt/shenyu-admin/ext-lib"
+      # ext-lib bind mount 已取消：SPI jar + mysql-connector.jar 都在镜像 ext-lib/ 层
     # ... 其余不变
 ```
 
 ```bash
 cd D:\privategit\gitee\docker-compose\Windows\shenyu-2.6.1
-docker compose -f docker-compose-ShenYu.yaml up -d shenyu-admin
+docker compose -f docker-compose-ShenYu.yaml up -d shenyu-admin   # up -d 触发 recreate（非 restart）
 ```
 
 验证同方式A。
+
+> **bind mount 与镜像层覆盖关系提醒**：若历史部署曾保留 ext-lib bind mount，bind mount 是目录级覆盖，会盖掉镜像层 ext-lib/ 同名文件。改造为"两个 jar 都烤进镜像 + 删 bind mount"后，运行容器加载的就是镜像层的 jar，不存在覆盖歧义。
 
 ---
 
@@ -179,7 +193,7 @@ exec ${JAVA_HOME}/bin/java ${JAVA_OPTS} -classpath ${CLASS_PATH} org.apache.shen
 
 - `ext-lib/*` 与 `lib/*` 同级拼进 JVM 启动 classpath（**非** Spring Boot loader.path 机制）
 - ext-lib 下的 jar 被 admin 主类加载器加载，与 admin 自身类同 classloader
-- SPI 的 `META-INF/spring.factories` 由 Spring Boot 自动装配扫描，`AppAuthCustomConfiguration` 被实例化，注册 Controller 和 Service Bean
+- **装配走组件扫描**：本包 `org.apache.shenyu.admin.custom` 位于 admin 主类 `@SpringBootApplication`（基包 `org.apache.shenyu.admin`）的默认扫描范围内，`AppAuthCustomConfiguration`（`@Configuration`）和 `AppAuthCustomCreateController`（`@RestController`）被组件扫描直接注册；`AppAuthCustomCreateService` 无 stereotype，靠 `@Configuration` 的 `@Bean` 方法注册。**刻意不放 spring.factories**——若同时用 spring.factories + 组件扫描，同一 Bean 会被双重注册导致 `BeanDefinitionOverrideException`（详见 README §2.2）
 - 注入的 `AppAuthMapper`、`ApplicationEventPublisher` 是 admin 容器既有 Bean，直接复用
 
 **与 bootstrap SPI 的差异**：bootstrap 用 ShenyuLoaderService（独立 classloader），admin 用传统 `-classpath`（同一 classloader）。本 SPI 无类隔离需求，传统 classpath 更简单可靠。
@@ -191,7 +205,7 @@ exec ${JAVA_HOME}/bin/java ${JAVA_OPTS} -classpath ${CLASS_PATH} org.apache.shen
 | 方式 | 回滚操作 |
 |---|---|
 | A（bind mount） | 删除 `shenyu-admin/ext-lib/shenyu-admin-appauth-spi-2.6.1.jar` → `docker compose restart shenyu-admin`。原生 `/appAuth/*` 接口不受影响 |
-| B（镜像化） | docker-compose 的 `image` 改回 `apache/shenyu-admin:2.6.1` → `docker compose up -d shenyu-admin` |
+| B（镜像化） | docker-compose 的 `image` 改回 `apache/shenyu-admin:2.6.1`，恢复 `ext-lib` bind mount 行（否则 mysql-connector 丢失，admin 启动失败）→ `docker compose up -d shenyu-admin` |
 
 回滚后 `POST /appAuth/customCreate` 端点消失，erpm-pay-center 调用会 404。app_auth 表已写入的记录保留（不影响原生功能）。
 
