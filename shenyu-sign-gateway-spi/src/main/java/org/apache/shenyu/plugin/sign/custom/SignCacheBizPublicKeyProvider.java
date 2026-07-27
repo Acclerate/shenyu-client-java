@@ -1,7 +1,7 @@
 /*
  * SignCacheBizPublicKeyProvider —— 网关侧验签公钥提供器（app_auth 源，websocket push）。
  *
- * 数据源：ShenYu admin 的 app_auth 表（app_secret 列承载 RSA 公钥 PEM）。
+ * 数据源：ShenYu admin 的 app_auth 表（app_secret 列承载 RSA 公钥裸 Base64，无 PEM 头尾标记）。
  *   admin 写库后通过 websocket 推送 APP_AUTH 分组事件，本类作为 AuthDataSubscriber
  *   回调接收 AppAuthData，存入 appAuthDataMap（数据源/truth）。
  *
@@ -18,7 +18,7 @@
  *   全量 REFRESH 的 clear 窗口内 everSynced 仍为 true，HealthIndicator 不会误判 DOWN
  *   导致 K8s 误摘流（裸用 isEmpty() 会在 refresh 清空瞬间产生假阴性）。
  *
- * enabled 语义（D3）：L2 只缓存 PublicKey（省 parsePem），enabled 每次实时从数据源读。
+ * enabled 语义（D3）：L2 只缓存 PublicKey（省 parseBase64），enabled 每次实时从数据源读。
  *   禁用/回滚仅受 websocket 推送延迟（秒级）影响，无额外缓存层延迟。
  *
  * 安全判空（铁律 5）：AppAuthData.getEnabled() 返回 Boolean 包装类型，
@@ -56,7 +56,7 @@ public final class SignCacheBizPublicKeyProvider implements BizPublicKeyProvider
     private final ConcurrentHashMap<String, AppAuthData> appAuthDataMap = new ConcurrentHashMap<>();
 
     /**
-     * L2 缓存：appKey → PublicKey（parsePem 结果，省去每次验签的 Base64+KeyFactory 开销）。
+     * L2 缓存：appKey → PublicKey（parseBase64 结果，省去每次验签的 Base64+KeyFactory 开销）。
      *
      * <p>volatile + Collections.unmodifiableMap 实现 safe publication：写线程构建新 Map 后整体发布，
      * 读线程要么看到完整旧 Map，要么看到完整新 Map，无半更新中间态。
@@ -90,14 +90,14 @@ public final class SignCacheBizPublicKeyProvider implements BizPublicKeyProvider
      *       <li>null + everSynced=false → 抛 not ready（首启未同步）</li>
      *       <li>null + everSynced=true → 抛 not found（业务方未配置）</li>
      *       <li>enabled=false → 抛 disabled</li>
-     *       <li>enabled=true → parsePem + copy-on-write 回填 L2</li>
+     *       <li>enabled=true → parseBase64 + copy-on-write 回填 L2</li>
      *     </ul>
      *   </li>
      * </ol>
      *
      * @param appKey 应用标识（来自请求头 X-Pay-App-Key）
      * @return 公钥
-     * @throws Exception appKey 非法、未就绪、未配置、被禁用、PEM 解析失败时抛出
+     * @throws Exception appKey 非法、未就绪、未配置、被禁用、公钥解析失败时抛出
      */
     @Override
     public PublicKey currentKey(final String appKey) throws Exception {
@@ -137,20 +137,20 @@ public final class SignCacheBizPublicKeyProvider implements BizPublicKeyProvider
             throw new IllegalStateException("appKey=" + normalized + " is disabled in app_auth");
         }
 
-        final String pem = authData.getAppSecret();
-        if (pem == null || pem.trim().isEmpty()) {
-            throw new IllegalStateException("app_secret (PEM) is empty for appKey=" + normalized);
+        final String base64Key = authData.getAppSecret();
+        if (base64Key == null || base64Key.trim().isEmpty()) {
+            throw new IllegalStateException("app_secret (public key base64) is empty for appKey=" + normalized);
         }
 
-        // 3. parse PEM + copy-on-write 回填 L2
+        // 3. parse Base64 + copy-on-write 回填 L2
         //    并发 miss 同一 appKey 时可能重复 parse，但结果幂等，可接受（换取热路径零锁）
         final PublicKey parsed;
         try {
-            parsed = PemUtils.parsePem(pem.trim());
+            parsed = PemUtils.parsePem(base64Key.trim());
         } catch (final Exception e) {
-            // PEM 非法不污染 L2，下次请求仍走 parse 重试
+            // 公钥非法不污染 L2，下次请求仍走 parse 重试
             LOG.warn("[GW-Sign] 解析公钥失败 appKey={}: {}", normalized, e.getMessage());
-            throw new IllegalStateException("invalid public key PEM for appKey=" + normalized, e);
+            throw new IllegalStateException("invalid public key (base64) for appKey=" + normalized, e);
         }
 
         final Map<String, PublicKey> nextMap = new HashMap<>(publicKeyMap);

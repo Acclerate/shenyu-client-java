@@ -33,23 +33,21 @@ import static org.mockito.Mockito.when;
  *   <li>enabled=false 显式禁用被尊重</li>
  *   <li>P1① 回归：update 未传 enabled/open → 保留 exist 现值（禁用的 appKey 轮换公钥不被静默重新启用）</li>
  *   <li>P1① 回归：update 显式传 enabled=true → 覆盖 exist 的 false（显式优先于现值）</li>
- *   <li>P2⑤ 回归：非法 PEM → 400，不落库、不推送</li>
+ *   <li>P2⑤ 回归：非法公钥 → 400，不落库、不推送</li>
  * </ul>
  */
 class AppAuthCustomCreateServiceTest {
 
     /**
-     * 真实的 2048-bit X.509 RSA 公钥 PEM（openssl 生成，仅测试用），可通过 fail-fast 校验。
+     * 真实的 2048-bit X.509 RSA 公钥裸 Base64（openssl 生成后剥离 PEM 头尾，仅测试用），可通过 fail-fast 校验。
      */
-    private static final String VALID_PEM = "-----BEGIN PUBLIC KEY-----\n"
-            + "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4XNGWw1qa9v9Q4BbQlWz\n"
+    private static final String VALID_PEM = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4XNGWw1qa9v9Q4BbQlWz\n"
             + "RgiG+Fnxa46oFPkliqSOF6QSlZWmiReWwFPVJ7kHLb1hZndmbjSYdt7ZBhKtrA9Q\n"
             + "XsuustaqObqWGa++4dDAAG5VOhF0Xo/WUUk9PMMa8ouMyfO6pG4qozynAHo7ZnTP\n"
             + "2PvnFDA69ctYsuA6HSPP/08qe2qUXBjvgshSRA07yOwe2IOhmkNlatJaRn0vpmId\n"
             + "BiXyotFBXcK6z3of8Y7yfbh4PrMGvni3bnHu45+7kxX/VmrHDRfaSaw1M2hcsFdx\n"
             + "RPhu7JzghK36Sbp5kzqw148GfbWYQNGyH5Ps6e8SXhaLDfWTkNiyitR0LuV5lJm3\n"
-            + "swIDAQAB\n"
-            + "-----END PUBLIC KEY-----";
+            + "swIDAQAB";
 
     private AppAuthMapper appAuthMapper;
     private ApplicationEventPublisher eventPublisher;
@@ -215,11 +213,12 @@ class AppAuthCustomCreateServiceTest {
     }
 
     /**
-     * P2⑤ 回归：非法 PEM（结构损坏）→ 400，不落库、不推送。
+     * P2⑤ 回归：带 PEM 头尾标记的串（新契约只认裸 Base64）→ 400，不落库、不推送。
      */
     @Test
     void shouldRejectInvalidPemWithoutDbWriteOrPush() {
         String appKey = "BAD-PEM";
+        // 新契约下 PemUtils 不再剥标记，含 ----- 和字母的串无法通过 Base64 解码
         String badPem = "-----BEGIN PUBLIC KEY-----\nnot-a-real-key\n-----END PUBLIC KEY-----";
 
         CustomAppAuthCreateReq req = newReq(appKey, badPem, null, null);
@@ -233,7 +232,7 @@ class AppAuthCustomCreateServiceTest {
     }
 
     /**
-     * P2⑤ 回归：缺 BEGIN/END 标记的裸 Base64 垃圾串 → 400（同样被 KeyFactory 拒绝）。
+     * P2⑤ 回归：非法裸串（非合法 Base64）→ 400（被 Base64 解码 / KeyFactory 拒绝）。
      */
     @Test
     void shouldRejectGarbageSecretWithoutMarkers() {

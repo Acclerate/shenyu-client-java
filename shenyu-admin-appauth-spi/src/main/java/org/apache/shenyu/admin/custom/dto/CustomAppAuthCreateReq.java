@@ -9,7 +9,8 @@ import javax.validation.constraints.Size;
  * POST /appAuth/customCreate 请求体。
  *
  * <p>用于在 shenyu-admin 的 app_auth 表 upsert 一条「指定 appKey」的记录，并把 appSecret 字段
- * 写为 RSA 公钥 PEM（设计方案 v2.0 的实时公钥源：app_auth.app_secret 承载公钥，语义重载）。
+ * 写为 RSA 公钥裸 Base64（设计方案 v2.0 的实时公钥源：app_auth.app_secret 承载公钥，语义重载；
+ * 不含 -----BEGIN/END PUBLIC KEY----- 头尾标记）。
  *
  * <p>与原生 /appAuth/apply 的区别：apply 会用 SignUtils.generateKey() 随机覆盖 appKey，
  * 而本接口严格使用入参 appKey，允许调用方（erpm-pay-center）用 pay_app_config.app_key 对齐。
@@ -26,9 +27,9 @@ public class CustomAppAuthCreateReq {
     private String appKey;
 
     /**
-     * 验签凭证。本方案中承载 RSA 公钥 PEM 文本（-----BEGIN PUBLIC KEY----- 头尾）。
-     * 对应 erpm-pay-center 的 pay_app_config.app_public_key（normalizeToPem 规范化后）。
-     * app_secret 列已扩到 VARCHAR(4096)，足够容纳 RSA-4096 PEM。
+     * 验签凭证。本方案中承载 RSA 公钥裸 Base64 文本（不含 -----BEGIN/END PUBLIC KEY----- 头尾标记）。
+     * 对应 erpm-pay-center 的 pay_app_config.app_public_key（normalizeToBase64 规范化后）。
+     * app_secret 列已扩到 VARCHAR(4096)，足够容纳 RSA-4096 裸 Base64。
      */
     @NotBlank(message = "appSecret 不能为空")
     private String appSecret;

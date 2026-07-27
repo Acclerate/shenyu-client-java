@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SignCacheBizPublicKeyProviderTest {
 
-    /** 生成 RSA-2048 公钥的标准 PEM */
+    /** 生成 RSA-2048 公钥的裸 Base64（无 PEM 头尾标记） */
     private static String generatePem() throws Exception {
         final KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
         kpg.initialize(2048);
@@ -36,8 +36,8 @@ class SignCacheBizPublicKeyProviderTest {
 
     private static String toPem(final PublicKey publicKey) {
         final byte[] der = publicKey.getEncoded();
-        final String base64 = Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(der);
-        return "-----BEGIN PUBLIC KEY-----\n" + base64 + "\n-----END PUBLIC KEY-----";
+        // 裸 Base64（64 字符折行），与 PemUtils 只认裸 Base64 的契约一致
+        return Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(der);
     }
 
     private static AppAuthData buildAuth(final String appKey, final String pem, final Boolean enabled) {
