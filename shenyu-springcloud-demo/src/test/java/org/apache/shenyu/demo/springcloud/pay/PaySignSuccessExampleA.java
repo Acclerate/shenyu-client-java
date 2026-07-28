@@ -9,7 +9,7 @@
  *             故线上必须带 body 签（本地网关无 body 缓存、按空 body 验，故本地示例仍置空）。
  *   - 算法：SHA256withRSA；时间窗 ±300s
  *
- * 本次目标：调用 https://shenyu.dev.jzterp.net/payCenter/v1/pay/url/create
+ * 本次目标：调用 https://shenyu.dev.jztweb.com/payCenter/v1/pay/url/create
  *   入参（业务报文）：requestSerialNo / bizOrderNo / goodsDesc / amount / buyerName / buyerUniqueId / makerName
  *   请求头：X-Pay-App-Key=06，以及 X-Pay-Timestamp / X-Pay-Nonce / X-Pay-Sign 等。
  *

@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class GatewaySignViaInterceptorTest {
 
-    private static final String GATEWAY_URL = "https://shenyu.dev.jzterp.net/payCenter/v1/pay/url/create";
+    private static final String GATEWAY_URL = "https://shenyu.dev.jztweb.com/payCenter/v1/pay/url/create";
 
     /** 与网关验签通过的字节保持一致的请求体（中文需 UTF-8 发送） */
     private static final String BODY =
