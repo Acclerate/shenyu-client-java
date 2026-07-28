@@ -137,6 +137,16 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- 业务方加签/响应验签工具（pay-sign-standalone）：本 demo 用它模拟业务方调用
+             退款查询接口。需先 mvn -pl pay-sign-standalone install -DskipTests 安装到本地 .m2。
+             注意：pay-sign-standalone 以 Java 11 编译，运行本测试需 JDK 11+。 -->
+        <dependency>
+            <groupId>com.jzt.erpm.pay</groupId>
+            <artifactId>pay-sign-standalone</artifactId>
+            <version>1.0.0.0-SNAPSHOT</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

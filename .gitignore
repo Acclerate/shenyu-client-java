@@ -52,3 +52,7 @@ Thumbs.db
 
 nacos-probe/*
 deptree*
+
+# 联调测试私钥（禁止提交，避免泄露）
+/docs/_joint_test_keys/
+*.pem
