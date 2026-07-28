@@ -120,7 +120,8 @@ public class PayRefundCallerTest {
 
     /** 解析 -Dtarget，默认 LOCAL */
     private static TargetEnv resolveTarget() {
-        String raw = System.getProperty("target", TargetEnv.LOCAL.name());
+//        String raw = System.getProperty("target", TargetEnv.LOCAL.name());
+        String raw = System.getProperty("target", TargetEnv.ONLINE.name());
         try {
             return TargetEnv.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException e) {

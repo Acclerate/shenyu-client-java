@@ -1,5 +1,6 @@
 package com.jzt.erpm.pay.sign;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ import java.security.PrivateKey;
  * # application.yml
  * pay:
  *   sign:
+ *     app-key: "06"            # 业务方 appKey，自动附加为 X-Pay-App-Key 头（网关要求必传）
  *     private-key: |
  *       -----BEGIN PRIVATE KEY-----
  *       ...(PKCS#8 私钥内容)...
@@ -46,14 +48,29 @@ import java.security.PrivateKey;
 public class PayRequestSigner {
 
     private final PrivateKey privateKey;
+    private final String appKey;
 
     /**
-     * 从配置 {@code pay.sign.private-key} 读取 PEM 私钥字符串并解析.
+     * 从配置读取 PEM 私钥与 appKey 并解析.
      *
-     * @param privateKey PEM 私钥字符串（含 BEGIN/END 标记，或纯 Base64）
+     * @param privateKey PEM 私钥字符串（含 BEGIN/END 标记，或纯 Base64），配置项 {@code pay.sign.private-key}
+     * @param appKey     业务方 appKey（如 06），配置项 {@code pay.sign.app-key}；
+     *                   透传给拦截器，由拦截器自动附加 X-Pay-App-Key 头（网关要求必传）
      */
-    public PayRequestSigner(@Value("${pay.sign.private-key:}") String privateKey) {
+    @Autowired
+    public PayRequestSigner(@Value("${pay.sign.private-key:}") String privateKey,
+                            @Value("${pay.sign.app-key:}") String appKey) {
         this.privateKey = PaySignUtils.loadPrivateKey(privateKey);
+        this.appKey = (appKey == null || appKey.trim().isEmpty()) ? null : appKey.trim();
+    }
+
+    /**
+     * 兼容旧用法：仅传私钥，不附加 appKey 头（等价于 pay.sign.app-key 未配置）。
+     *
+     * @param privateKey PEM 私钥字符串
+     */
+    public PayRequestSigner(String privateKey) {
+        this(privateKey, null);
     }
 
     /**
@@ -65,11 +82,12 @@ public class PayRequestSigner {
      *   <li>构造 5 行签名串</li>
      *   <li>使用 SHA256withRSA 签名</li>
      *   <li>设置 HTTP 头：X-Pay-Timestamp、X-Pay-Nonce、X-Pay-Sign</li>
+     *   <li>若配置了 appKey，附加 X-Pay-App-Key 头（网关要求必传）</li>
      * </ul>
      *
      * @return 请求签名拦截器
      */
     public ClientHttpRequestInterceptor createInterceptor() {
-        return new PaySignInterceptor(new PaySignerImpl(privateKey));
+        return new PaySignInterceptor(new PaySignerImpl(privateKey), appKey);
     }
 }

@@ -53,23 +53,65 @@ cat public_key.pem
 ```yaml
 pay:
   sign:
+    app-key: "06"            # 业务方 appKey，自动附加为 X-Pay-App-Key 头（网关要求必传）
     private-key: |
       -----BEGIN PRIVATE KEY-----
       （PKCS#8 私钥内容）
       -----END PRIVATE KEY-----
 ```
 
-### 2. 注册 RestTemplate 拦截器
+### 2. 注册 RestTemplate 拦截器（⚠️ 必须 UTF-8）
+
+> **关键坑**：`RestTemplate` 的 `StringHttpMessageConverter` 默认编码是 **ISO-8859-1**。
+> 请求体含中文（买家名、商品描述）时若未显式设为 UTF-8，写出字节会被损坏，
+> 导致网关 `401 sign verify failed`。因此「加签」与「UTF-8」必须成对出现。
+
+#### ✅ 推荐：一键工厂产出（已含 UTF-8，业务系统零配置）
+
+```java
+// 方式一：直接用工厂新建
+@Bean
+public RestTemplate restTemplate(PayRequestSigner signer) {
+    return PaySignRestTemplateFactory.createSignedUtf8(signer);
+}
+
+// 方式二：复用业务自有 RestTemplate（不破坏其连接池等配置）
+@Bean
+public RestTemplate restTemplate(PayRequestSigner signer, SomeConfig cfg) {
+    RestTemplate rt = new RestTemplate(cfg.customRequestFactory());
+    PaySignRestTemplateFactory.configureSignedUtf8(rt, signer);   // 注入加签 + UTF-8
+    return rt;
+}
+```
+
+#### ✅ 更省事：直接导入「一键 Bean」配置
 
 ```java
 @Configuration
-public class PayConfig {
-    @Bean
-    public RestTemplate restTemplate(PayRequestSigner signer) {
-        RestTemplate rt = new RestTemplate();
-        rt.getInterceptors().add(signer.createInterceptor());
-        return rt;
-    }
+@Import(PaySignRestTemplateConfig.class)   // 启用后自动产出 bean 名 paySignedRestTemplate
+public class PayConfig { }
+
+// 使用：
+@Autowired
+@Qualifier("paySignedRestTemplate")
+private RestTemplate payClient;
+```
+
+> `PaySignRestTemplateConfig` 位于 `com.jzt.erpm.pay.sign.config` 子包，**不会被**
+> 对 `com.jzt.erpm.pay.sign` 的组件扫描自动加载，需显式 `@Import` 或扫描该子包，
+> 避免与业务自有 `RestTemplate` Bean 冲突。
+
+#### ⚠️ 若手写（不推荐）：务必补上 UTF-8
+
+```java
+@Bean
+public RestTemplate restTemplate(PayRequestSigner signer) {
+    RestTemplate rt = new RestTemplate();
+    rt.getMessageConverters().stream()
+        .filter(c -> c instanceof StringHttpMessageConverter)
+        .forEach(c -> ((StringHttpMessageConverter) c).setDefaultCharset(StandardCharsets.UTF_8));
+    rt.getInterceptors().add(signer.createInterceptor());
+    return rt;
 }
 ```
 
@@ -89,6 +131,7 @@ String resp = restTemplate.postForObject(url, request, String.class);
 | `X-Pay-Timestamp` | 时间戳字符串 | `PaySignUtils.newTimestamp()`（毫秒级） |
 | `X-Pay-Nonce` | 32 位 hex | `PaySignUtils.newNonce()`（`SecureRandom`） |
 | `X-Pay-Sign` | Base64 签名 | SHA256withRSA 私钥签 |
+| `X-Pay-App-Key` | `pay.sign.app-key` 配置值 | 配置了才附加（网关要求必传） |
 
 ## 三、响应验签
 
@@ -152,6 +195,7 @@ POST\n
 | `pay.sign.private-key未配置` | yml 未配 `pay.sign.private-key` |
 | `pay.sign.private-key格式错误` | 私钥被截断 / 非 PKCS#8 / 换行异常 |
 | 对方验签失败 | 编码非 UTF-8 / URL 不含 query / 方法未大写 / 换行符缺失 / 密钥不配对 |
+| `401 missing X-Pay-App-Key header` | 未配置 `pay.sign.app-key`（或构造拦截器未传 appKey），网关要求该头必传 |
 
 ## 七、核心类
 
@@ -161,6 +205,8 @@ POST\n
 | `PaySignerImpl` | SHA256withRSA 加签实现 |
 | `PaySignInterceptor` | RestTemplate 拦截器，自动加签 |
 | `PayRequestSigner` | Spring Bean，读取私钥配置 |
+| `PaySignRestTemplateFactory` | 一键产出「已加签 + UTF-8」的 RestTemplate（业务系统推荐） |
+| `PaySignRestTemplateConfig` | `@Configuration` 一键产出 `paySignedRestTemplate` Bean（opt-in，需 `@Import`） |
 | `PayResponseVerifier` | 响应/回调验签（支付公钥） |
 
 ## 八、测试用例
@@ -171,6 +217,10 @@ POST\n
 | 测试类 | 用例 | 验证点 |
 |--------|------|--------|
 | `PaySignerTest` | `shouldSignWithFiveLineFormat` | `PaySignerImpl` 产出的 5 行签名串格式正确，时间戳/nonce 原样回传 |
+| `PaySignInterceptorTest` | `signStringMustUseDecodedUrlToMatchGateway` | 拦截器用解码后 URL 对齐网关，并自动附加 X-Pay-App-Key 头 |
+| `PaySignRestTemplateConfigTest` | `factoryProducesSignedUtf8RestTemplate` / `configBeanIsSignedAndUtf8` | 工厂与配置产出的 RestTemplate 已注入 PaySignInterceptor 且 StringHttpMessageConverter 为 UTF-8 |
+| `GatewaySignViaInterceptorTest` | `callLiveGatewayViaProductionSigner` | 走生产加签代码（PayRequestSigner+工厂+RestTemplate）调线上网关，HTTP 200 验签通过 |
+| `GatewaySignCallExampleTest` | `shouldSignAndCallGateway` | 手动 OkHttp+PaySignUtils 调线上网关，HTTP 200 验签通过（基础范例） |
 | `PayResponseVerifierTest` | `shouldPassForValidSignature` | 支付私钥签的响应，支付公钥验签通过（加签→验签闭环） |
 
 运行：
