@@ -57,7 +57,7 @@ public class PaySignSuccessExampleA {
                 "/keys/biz-private-key.pem",
                 "YYT",
                 "本地 docker shenyu-bootstrap-261（YYT 公钥已配 shenyu_261.app_auth，nacos 同步）"),
-        ONLINE("https://shenyu.dev.jzterp.net",
+        ONLINE("https://shenyu.dev.jztweb.com",
                 "/payCenter/v1/pay/url/create",
                 "/keys/biz-private-key-online1.pem",
                 "06",

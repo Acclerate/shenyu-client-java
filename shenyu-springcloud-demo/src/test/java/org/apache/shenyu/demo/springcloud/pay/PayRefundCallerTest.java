@@ -28,7 +28,7 @@
  *     -Dcase=both           两个场景都跑（realBody 失败为预期，作为对照验证）
  *
  * 双环境差异（见 TargetEnv）：
- *   - 网关地址：本地 http://localhost:9196 / 线上 https://shenyu.dev.jzterp.net
+ *   - 网关地址：本地 http://localhost:9196 / 线上 https://shenyu.dev.jztweb.com
  *   - 验签 path：本地 /springcloud-demo/order/save（selector /springcloud-demo/* 开 sign，
  *     OrderController 已注册到 shenyu_261.meta_data）/ 线上 /payCenter/v1/refund/query
  *   - appKey 所配公钥不同 → 必须用对应环境的私钥加签
@@ -79,7 +79,7 @@ public class PayRefundCallerTest {
                 "/springcloud-demo/order/save",
                 "/keys/biz-private-key.pem",
                 "本地 docker（shenyu-bootstrap-261，selector /springcloud-demo/* 开 sign）"),
-        ONLINE("https://shenyu.dev.jzterp.net",
+        ONLINE("https://shenyu.dev.jztweb.com",
                 "/payCenter/v1/refund/query",
                 "/keys/biz-private-key-online.pem",
                 "线上 dev（shenyu.dev.jzterp.net，退款查询 path）");

@@ -1,11 +1,12 @@
 /*
  * PayRsaSignConfiguration —— SPI 自动装配入口。
  *
- * 注册四个 Bean：
+ * 注册五个 Bean：
  *   - NativeSignServiceRemover（BeanDefinitionRegistryPostProcessor，强制移除原生 signService）
  *   - SignCacheBizPublicKeyProvider（公钥提供器 + AuthDataSubscriber 单订阅者）
  *   - AppAuthHealthIndicator（actuator 就绪检查）
- *   - PayRsaSignService（替换 ShenYu 原生 ComposableSignService）
+ *   - PayReplayGuard（防重放守卫）
+ *   - PayRsaSignService（替换 ShenYu 原生 ComposableSignService，含防重放检查）
  *
  * 替换原生 ComposableSignService 的双保险（2026-07-27 排查后定型）：
  *   ① NativeSignServiceRemover（主）：PriorityOrdered + HIGHEST_PRECEDENCE 的
@@ -78,15 +79,34 @@ public class PayRsaSignConfiguration {
         return new AppAuthHealthIndicator(signCacheBizPublicKeyProvider);
     }
 
+
+    /**
+     * 防重放（replay）守卫（Redis 去重 + 本地熔断 + fail-open）。
+     *
+     * <p>配置来自环境变量 PAY_REPLAY_*（compose bootstrap 段）；未设置 REDIS_URI 时
+     * 未设置 REDIS_URI 时视为功能关闭（不再回退到已移除的 IN-FLIGHT URI）。
+     * 未启用时 Bean 仍注册但 tryMark 恒 true（零开销，不建 Redis 连接——懒初始化）。
+     *
+     * @return guard
+     */
+    @Bean(destroyMethod = "close")
+    public PayReplayGuard payReplayGuard() {
+        final PayReplayProperties props = PayReplayProperties.fromEnv();
+        LOG.info("[GW-Replay] PayReplayGuard 已注册 {}", props);
+        return new PayReplayGuard(props);
+    }
+
     /**
      * 验签服务，替换原生 ComposableSignService。
      *
      * <p>配合 {@link NativeSignServiceRemover} 移除原生后，本 Bean 是容器里唯一的
      * {@link SignService} 候选，{@code SignPlugin} 构造注入时必中。
+     * 验签链：时间戳有效 → 防重放(nonce唯一) → RSA 验签。
      */
     @Bean
-    public SignService payRsaSignService(final BizPublicKeyProvider bizPublicKeyProvider) {
-        LOG.info("[GW-Sign] PayRsaSignService 已注册（替换原生 ComposableSignService）");
-        return new PayRsaSignService(bizPublicKeyProvider);
+    public SignService payRsaSignService(final BizPublicKeyProvider bizPublicKeyProvider,
+                                         final PayReplayGuard payReplayGuard) {
+        LOG.info("[GW-Sign] PayRsaSignService 已注册（替换原生 ComposableSignService，含 replay 检查）");
+        return new PayRsaSignService(bizPublicKeyProvider,  payReplayGuard);
     }
 }

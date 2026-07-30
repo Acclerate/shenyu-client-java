@@ -1,8 +1,8 @@
 /*
- * SignCacheBizPublicKeyProvider —— 网关侧验签公钥提供器（app_auth 源，websocket push）。
+ * SignCacheBizPublicKeyProvider —— 网关侧验签公钥提供器（app_auth 源，Nacos push / data-sync 推送）。
  *
  * 数据源：ShenYu admin 的 app_auth 表（app_secret 列承载 RSA 公钥裸 Base64，无 PEM 头尾标记）。
- *   admin 写库后通过 websocket 推送 APP_AUTH 分组事件，本类作为 AuthDataSubscriber
+ *   admin 写库后通过 Nacos 推送 APP_AUTH 分组事件，本类作为 AuthDataSubscriber
  *   回调接收 AppAuthData，存入 appAuthDataMap（数据源/truth）。
  *
  * 单订阅者原则（铁律 4）：本类同时实现 BizPublicKeyProvider 和 AuthDataSubscriber，
@@ -12,14 +12,14 @@
  * 线程模型：
  *   - currentKey() 热路径：在 Netty EventLoop 线程上同步调用，仅读两个 Map（L2 + 数据源），
  *     零 I/O。L2 用 volatile + unmodifiableMap 实现 safe publication；数据源是 ConcurrentHashMap。
- *   - onSubscribe/unSubscribe/refresh：在 websocket 接收线程上调用，唯一写入者。
+ *   - onSubscribe/unSubscribe/refresh：在 Nacos 接收线程（data-sync listener）上调用，唯一写入者。
  *
  * 就绪语义（D2）：everSynced 标志首次收到数据后置 true 且永不再变 false。
  *   全量 REFRESH 的 clear 窗口内 everSynced 仍为 true，HealthIndicator 不会误判 DOWN
  *   导致 K8s 误摘流（裸用 isEmpty() 会在 refresh 清空瞬间产生假阴性）。
  *
  * enabled 语义（D3）：L2 只缓存 PublicKey（省 parseBase64），enabled 每次实时从数据源读。
- *   禁用/回滚仅受 websocket 推送延迟（秒级）影响，无额外缓存层延迟。
+ *   禁用/回滚仅受 Nacos 推送延迟（秒级）影响，无额外缓存层延迟。
  *
  * 安全判空（铁律 5）：AppAuthData.getEnabled() 返回 Boolean 包装类型，
  *   一律用 Boolean.TRUE.equals(...) 判定，禁用 !getEnabled()（null 时 NPE）。
@@ -38,7 +38,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 业务公钥提供器（app_auth 源，websocket push，多租户）。
+ * 业务公钥提供器（app_auth 源，Nacos push，多租户）。
  *
  * <p>同时实现 {@link BizPublicKeyProvider} 和 {@link AuthDataSubscriber}，
  * 单一对象统管数据源与 L2 缓存，是本 SPI 唯一的 AuthDataSubscriber 实现。
@@ -50,7 +50,7 @@ public final class SignCacheBizPublicKeyProvider implements BizPublicKeyProvider
     /**
      * 数据源（truth）：appKey → AppAuthData。
      *
-     * <p>由 {@link #onSubscribe}/{@link #unSubscribe}/{@link #refresh} 在 websocket 线程维护，
+     * <p>由 {@link #onSubscribe}/{@link #unSubscribe}/{@link #refresh} 在 Nacos 接收线程维护，
      * 由 {@link #currentKey} 在 EventLoop 线程并发读。ConcurrentHashMap 保证读的内存可见性。
      */
     private final ConcurrentHashMap<String, AppAuthData> appAuthDataMap = new ConcurrentHashMap<>();
@@ -66,7 +66,7 @@ public final class SignCacheBizPublicKeyProvider implements BizPublicKeyProvider
     /**
      * 就绪标志：首次收到非空数据后置 true，永不再变 false。
      *
-     * <p>用于 {@link AppAuthHealthIndicator} 判断网关是否已完成首次 websocket 同步。
+     * <p>用于 {@link AppAuthHealthIndicator} 判断网关是否已完成首次 Nacos 同步。
      * 不用 {@link #appAuthDataMap}.isEmpty() 的原因：全量 REFRESH 时 {@link #refresh}
      * 会 clear 数据源，此时 isEmpty()=true 但 everSynced 仍 true，避免 HealthIndicator
      * 在 refresh 清空窗口误报 DOWN 导致 K8s 摘流。
@@ -125,7 +125,7 @@ public final class SignCacheBizPublicKeyProvider implements BizPublicKeyProvider
         // 2. L2 miss → 从数据源回源
         final AppAuthData authData = appAuthDataMap.get(normalized);
         if (authData == null) {
-            // 就绪语义：everSynced=false 表示尚未完成首次 websocket 同步
+            // 就绪语义：everSynced=false 表示尚未完成首次 Nacos 同步
             if (!everSynced) {
                 throw new IllegalStateException(
                         "public key provider not initialized yet (app_auth data not synced), appKey=" + normalized);

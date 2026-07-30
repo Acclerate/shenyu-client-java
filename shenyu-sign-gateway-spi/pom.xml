@@ -77,6 +77,58 @@
             <version>2.9.0</version>
             <scope>provided</scope>
         </dependency>
+        <!-- lettuce：防重放 Redis 客户端（镜像 lib/ 已含 lettuce-core-6.1.10.RELEASE，provided） -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+            <version>6.1.10.RELEASE</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- guava：本地缓存兜底（ShenYu Bootstrap 已含 guava-32.0.0-jre，provided） -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>32.0.0-jre</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- netty：与 bootstrap 镜像一致的 4.1.100.Final，nearest-wins 压掉其他 provided 依赖
+             传递进来的旧版 netty（否则本地测试 lettuce 报 NoSuchFieldError: NETWORK_INTERFACES） -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
+            <version>4.1.100.Final</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <version>4.1.100.Final</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <version>4.1.100.Final</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver</artifactId>
+            <version>4.1.100.Final</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec</artifactId>
+            <version>4.1.100.Final</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>4.1.100.Final</version>
+            <scope>provided</scope>
+        </dependency>
 
         <!-- 测试：JUnit 5 -->
         <dependency>

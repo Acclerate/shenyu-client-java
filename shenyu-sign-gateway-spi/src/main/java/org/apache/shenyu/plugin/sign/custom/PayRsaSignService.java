@@ -59,16 +59,24 @@ public class PayRsaSignService implements SignService {
     /** 验签输入日志中 body 预览的最大长度 */
     private static final int BODY_PREVIEW_LIMIT = 100;
 
+    /** 防重放键前缀（严格契约：replay:{appKey}:{timestamp}:{nonce}） */
+    private static final String REPLAY_KEY_PREFIX = "replay:";
+
     private final BizPublicKeyProvider bizPublicKeyProvider;
 
+    /** 防重放守卫（可为 null = 功能关闭，行为与旧版一致） */
+    private final PayReplayGuard replayGuard;
+
     /**
-     * 构造函数，注入业务系统公钥。
+     * 构造函数（含防重放检查，replayGuard 为 null/未启用时跳过，兼容旧用法/单测）。
      *
      * @param bizPublicKeyProvider 业务系统公钥提供器（admin plugin.config 源 + 本地缓存）
      */
-    public PayRsaSignService(final BizPublicKeyProvider bizPublicKeyProvider) {
+    public PayRsaSignService(final BizPublicKeyProvider bizPublicKeyProvider, PayReplayGuard replayGuard) {
         this.bizPublicKeyProvider = bizPublicKeyProvider;
+        this.replayGuard = replayGuard;
     }
+
 
     @Override
     public VerifyResult signatureVerify(final ServerWebExchange exchange, final String requestBody) {
@@ -79,14 +87,21 @@ public class PayRsaSignService implements SignService {
 
             parseAndValidateTimestamp(headers.getTimestamp());
 
+            // 防重放：nonce 唯一性校验（spec 步骤2，先于签名验证）
+            final VerifyResult replay = replayCheck(exchange, headers.getAppKey(),
+                    headers.getTimestamp(), headers.getNonce());
+            if (!replay.isSuccess()) {
+                return replay;
+            }
+
             final String signString = buildSignString(headers, requestBody);
             logVerificationInput(headers, requestBody, signString);
 
             if (verifySignature(headers.getAppKey(), signString, headers.getSign())) {
-                LOG.info("[GW-Sign] ✅ 验签通过 appKey={}", headers.getAppKey());
+                LOG.info("[GW-Sign]  验签通过 appKey={}", headers.getAppKey());
                 return VerifyResult.success();
             }
-            LOG.warn("[GW-Sign] ❌ 验签失败 appKey={}（签名串与 sign 不匹配）", headers.getAppKey());
+            LOG.warn("[GW-Sign]  验签失败 appKey={}（签名串与 sign 不匹配）", headers.getAppKey());
             return fail401(exchange, "sign verify failed");
         } catch (final SignVerificationException ex) {
             // 可预期的校验失败（缺头 / 时间戳非法或过期等），reason 已描述原因
@@ -101,6 +116,40 @@ public class PayRsaSignService implements SignService {
             LOG.error("[GW-Sign] 验签异常", ex);
             return fail401(exchange, "verify error: " + ex.getMessage());
         }
+    }
+
+    // ================= 防重放（replay）=================
+
+    /**
+     * 防重放检查：拦截同一 (appKey, timestamp, nonce) 的重放请求。
+     *
+     * <p>Key 契约（严格）：{@code replay:{appKey}:{timestamp}:{nonce}}。
+     * <ul>
+     *   <li>guard 为 null / 未启用 → 直接放行（与旧版行为一致）</li>
+     *   <li>首次出现（SET NX 成功）→ 标记并放行</li>
+     *   <li>key 已存在（重放）→ 401 "replay request detected"</li>
+     * </ul>
+     *
+     * <p>校验顺序（spec）：时间戳有效 → nonce 唯一(replay) → 签名正确。
+     * 故本步在 {@link #verifySignature} 之前执行；fail-open 下 Redis 异常亦放行，不阻断支付。
+     *
+     * @param exchange exchange
+     * @param appKey 验签通过的 appKey
+     * @param timestamp X-Pay-Timestamp 原始头值（epoch 毫秒）
+     * @param nonce X-Pay-Nonce 原始头值
+     * @return 放行 success / 401 fail
+     */
+    private VerifyResult replayCheck(final ServerWebExchange exchange, final String appKey,
+                                     final String timestamp, final String nonce) {
+        if (replayGuard == null || !replayGuard.getProps().isEnabled()) {
+            return VerifyResult.success();
+        }
+        final String key = REPLAY_KEY_PREFIX + appKey + ":" + timestamp.trim() + ":" + nonce.trim();
+        if (replayGuard.tryMark(key)) {
+            return VerifyResult.success();
+        }
+        LOG.warn("[GW-Replay]  重放请求被拦截 key={}", key);
+        return fail401(exchange, "replay request detected");
     }
 
     /**

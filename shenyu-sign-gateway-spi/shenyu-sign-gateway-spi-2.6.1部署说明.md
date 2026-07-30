@@ -1,7 +1,7 @@
 # shenyu-sign-gateway-spi 部署说明
 
 > 解法A核心工程：网关侧 RSA 验签 SPI，验签上移到 SignPlugin。
-> 公钥来源 = shenyu-admin 的 `springCloud` 插件 `config` → 经 WebSocket 同步进 bootstrap 的 `BaseDataCache` map 缓存 → SPI 轮询读取。**不依赖 Redis**。
+> 公钥来源 = shenyu-admin 的 `springCloud` 插件 `config` → 经 Nacos 同步进 bootstrap 的 `BaseDataCache` map 缓存 → SPI 轮询读取。**不依赖 Redis**。
 
 ## 打包与镜像构建
 
@@ -53,7 +53,10 @@ services:
       # 无需 ext-lib bind mount，也无需任何 Redis 相关配置
     environment:
       - TZ=Asia/Shanghai
-      - shenyu.sync.websocket.urls=ws://shenyu-admin-261:9095/websocket
+      - SHENYU_SYNC_WEBSOCKET_ENABLED=false
+      - SHENYU_SYNC_NACOS_URL=host.docker.internal:8848
+      - SHENYU_SYNC_NACOS_NAMESPACE=
+      - SHENYU_SYNC_NACOS_ACM_ENABLED=false
       - GW_SPRINGCLOUD_REFRESH_INTERVAL_SECONDS=30   # BaseDataCache 轮询周期（秒，下限 5）
 ```
 
@@ -66,7 +69,7 @@ docker compose -f docker-compose-ShenYu.yaml up -d --force-recreate shenyu-boots
 
 ### 公钥来源：ShenYu 插件数据（BaseDataCache）⚠️ v1.x 历史描述，已被 v2.0（app_auth 数据源）覆盖
 
-> **本节描述的 `AdminConfigBizPublicKeyProvider` 已在 v2.0 删除**，替换为 `SignCacheBizPublicKeyProvider`（公钥源 = app_auth 表，websocket push 实时同步）。本节仅作历史背景保留，**实际部署以本文档末尾「v2.0 部署补充」章节为准**。
+> **本节描述的 `AdminConfigBizPublicKeyProvider` 已在 v2.0 删除**，替换为 `SignCacheBizPublicKeyProvider`（公钥源 = app_auth 表，Nacos push 实时同步）。本节仅作历史背景保留，**实际部署以本文档末尾「v2.0 部署补充」章节为准**。
 
 `PayRsaSignService` 通过 ~~`AdminConfigBizPublicKeyProvider`~~（v1.x）取公钥，公钥源 = admin 的 `springCloud` 插件 `config`：
 
@@ -98,7 +101,7 @@ UPDATE shenyu_261.plugin
 SET config='{...,"gw.springcloud.app-key.biz001":"-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"}'
 WHERE name='springCloud';
 ```
-> 直改 DB 后需 `docker compose ... restart shenyu-admin`，admin 重启从 DB 重载 → WebSocket 下发 → bootstrap `BaseDataCache` 更新（≤30s 生效）。
+> 直改 DB 后需 `docker compose ... restart shenyu-admin`，admin 重启从 DB 重载 → Nacos 下发 → bootstrap `BaseDataCache` 更新（≤30s 生效）。
 
 ### 启动验证
 
@@ -137,7 +140,7 @@ docker logs -f shenyu-bootstrap-261 | grep -i "GW-Sign"
 | **admin 同步正常** | BaseDataCache 命中，30s 内公钥生效 | 正常 |
 | **plugin.config 无该 appKey** | 热路径 `currentKey` 未命中 → 验签失败 | HTTP 401 |
 | **config 为空/非法 JSON/0 条有效公钥** | 保留旧缓存（优雅降级），不放大为全站 401 | 用旧公钥继续验签 |
-| **admin/WebSocket 故障** | BaseDataCache 保留旧值兜底 | 用旧值继续，重连后自动刷新 |
+| **admin/Nacos 故障** | BaseDataCache 保留旧值兜底 | 用旧值继续，重连后自动刷新 |
 | **cacheMap 尚未初始化** | 首次同步未完成 | HTTP 401（provider not initialized） |
 
 **关键点**：
@@ -177,7 +180,7 @@ ContextPathPlugin 执行时（SignPlugin 之后）：
 # v2.0 部署补充（app_auth 数据源，2026-07-24）
 
 > **本章节内容覆盖上文 v1.x 的"公钥注入方式"与"公钥回滚"描述。**
-> v2.0 起，公钥数据源从 `plugin.config` JSON 切换为 `app_auth` 表，SPI 通过 websocket push 实时接收，零轮询。
+> v2.0 起，公钥数据源从 `plugin.config` JSON 切换为 `app_auth` 表，SPI 通过 Nacos push 实时接收，零轮询。
 
 ## 数据源切换
 
@@ -185,9 +188,9 @@ ContextPathPlugin 执行时（SignPlugin 之后）：
 |---|---|---|
 | 公钥存储 | `plugin(name='springCloud').config` 的 `gw.springcloud.app-key.<appKey>` | `app_auth.app_secret`（VARCHAR 扩到 4096） |
 | 同步通路 | PLUGIN group | **APP_AUTH group** |
-| 网关侧缓存 | `BaseDataCache.PLUGIN_MAP` + 30s 轮询 | `SignCacheBizPublicKeyProvider` 自建 `ConcurrentHashMap`，websocket push 秒级实时 |
+| 网关侧缓存 | `BaseDataCache.PLUGIN_MAP` + 30s 轮询 | `SignCacheBizPublicKeyProvider` 自建 `ConcurrentHashMap`，Nacos push 秒级实时 |
 | 就绪检查 | 无 | `AppAuthHealthIndicator` + K8s readinessProbe |
-| 实时性 | 30s 延迟 | 秒级（websocket 推送延迟） |
+| 实时性 | 30s 延迟 | 秒级（Nacos 推送延迟） |
 
 ## 数据库变更（前置，DBA 执行）
 
@@ -216,7 +219,7 @@ ALTER TABLE `app_auth` MODIFY COLUMN `app_secret` VARCHAR(4096)
 | **`/appAuth/updateDetail`** | POST AppAuthDTO | ✅ **推荐**，JSON body 可放任意长 PEM |
 | `/appAuth/updateSl` | GET | ❌ PEM 的 `\n`/`=`/`+` 在 URL 需编码 |
 
-**工作流**：先 `POST /appAuth/apply` 拿 appKey → 再 `POST /appAuth/updateDetail` 把 PEM 写进 appSecret 覆盖随机值 → admin 自动 websocket 推送到网关。
+**工作流**：先 `POST /appAuth/apply` 拿 appKey → 再 `POST /appAuth/updateDetail` 把 PEM 写进 appSecret 覆盖随机值 → admin 自动经 Nacos 推送到网关。
 
 ## K8s 就绪探针配置（新增）
 
@@ -232,7 +235,7 @@ readinessProbe:
 ```
 
 **工作原理**：
-1. Pod 启动，websocket 尚未同步 → `AppAuthHealthIndicator` 返回 DOWN（`everSynced=false`）
+1. Pod 启动，Nacos 尚未同步 → `AppAuthHealthIndicator` 返回 DOWN（`everSynced=false`）
 2. K8s 探针失败，Pod 不 Ready，不接流量
 3. admin 完成首次推送 → `everSynced=true` → HealthIndicator 返回 UP
 4. Pod Ready，开始接流量
@@ -244,7 +247,7 @@ readinessProbe:
 | 变量 | v1.x | v2.0 |
 |---|---|---|
 | `GW_SPRINGCLOUD_REFRESH_INTERVAL_SECONDS` | 30（轮询周期） | **已废弃**（零轮询，删除） |
-| `shenyu.sync.websocket.urls` | ws://admin/websocket | 不变 |
+| `shenyu.sync.nacos.url` | host.docker.internal:8848 | 已切 Nacos（websocket 已禁用，SHENYU_SYNC_WEBSOCKET_ENABLED=false）|
 | `shenyu.plugins.sign.enabled` | 默认 true | **必须保持 true**（禁用则缓存不填充，方案失效） |
 
 ## 公钥回滚（v2.0）

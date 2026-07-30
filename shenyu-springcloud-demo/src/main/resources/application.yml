@@ -29,7 +29,14 @@
 # =====================================================================
 
 server:
+  # 监听 IPv4（Docker 容器访问需要），否则只监听 IPv6 (::)
+  address: 0.0.0.0
   port: 8471
+
+# Java 21 默认优先 IPv6，强制使用 IPv4 栈
+java:
+  net:
+    preferIPv4Stack: true
 
 spring:
   application:
@@ -48,6 +55,10 @@ spring:
         server-addr: 127.0.0.1:8848
         # public namespace 的 ID 是空字符串（不是名字 "public"）；与 shenyu-bootstrap 侧必须一致
         namespace: ""
+        # 注册到 Nacos 的 IP（Docker 容器访问宿主机用 host.docker.internal）
+        ip: 10.19.236.150
+        # 注册到 Nacos 的端口
+        port: 8471
         # Nacos 2.5.x 即使 NACOS_AUTH_ENABLE=false，server 也会对未定义用户名返回 "User xxx not found"
         # （client 的 SecurityProxy 每次启动都尝试 login）。鉴权关闭时不传 username/password，
         # 让 client 走匿名（不调 login 接口），消除 ERROR 日志噪音。
@@ -65,7 +76,7 @@ shenyu:
     props:
       username: admin
       # 与 admin 数据库 dashboard_user 表里的密码保持一致（本环境非默认 123456）
-      password: 1qaz!QAZ
+      password: Jzt600998.
   client:
     springCloud:
       props:
@@ -83,8 +94,7 @@ shenyu:
 sign:
   public-key-store:
     keys:
-      biz001: biz-public-key.pem
-      biz002: biz-public-key-2.pem
+      06: pay-public-key-online1.pem
 
 management:
   endpoints:

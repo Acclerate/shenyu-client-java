@@ -47,7 +47,7 @@ public class PaySignSuccessExample {
 //                "/springcloud-demo/order/save",
 //                "/keys/biz-private-key.pem",
 //                "本地 docker shenyu-bootstrap-261（YYT 公钥已配 shenyu_261.app_auth，nacos 同步）"),
-        ONLINE("https://shenyu.dev.jzterp.net",
+        ONLINE("https://shenyu.dev.jztweb.com",
                 "/payCenter/v1/pay/query",
                 "/keys/biz-private-key-online.pem",
                 "线上 dev（YYT 公钥=erpm-dev shenyu.app_auth，DB 改签需触发网关重载）");

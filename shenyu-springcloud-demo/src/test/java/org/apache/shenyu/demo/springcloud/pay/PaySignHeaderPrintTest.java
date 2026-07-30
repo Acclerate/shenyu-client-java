@@ -25,7 +25,7 @@ import java.security.spec.RSAPublicKeySpec;
 
 public class PaySignHeaderPrintTest {
 
-    private static final String GATEWAY = "https://shenyu.dev.jzterp.net";
+    private static final String GATEWAY = "https://shenyu.dev.jztweb.com";
     private static final String PATH = "/payCenter/v1/pay/url/create";
     private static final String METHOD = "POST";
     private static final String APP_KEY = "06";

@@ -7,7 +7,7 @@
  *   3. 用 OkHttp 发送，body 逐字节原样发出（OkHttp 不做 JSON 格式化，故签名必然对齐）；
  *   4. 断言：只要不是 401 sign verify failed（即验签通过），即视为成功示例。
  *
- * 运行（需能直连内网域名 shenyu.dev.jzterp.net）：
+ * 运行（需能直连内网域名 shenyu.dev.jztweb.com）：
  *   mvn -f pay-sign-standalone/pom.xml test -Dtest=GatewaySignCallExampleTest
  */
 package com.jzt.erpm.pay.sign;
@@ -29,22 +29,23 @@ import java.util.concurrent.TimeUnit;
 
 public class GatewaySignCallExampleTest {
 
-    private static final String GATEWAY = "https://shenyu.dev.jzterp.net";
-    private static final String PATH = "/payCenter/v1/pay/url/create";
+    private static final String GATEWAY = "https://shenyu.dev.jztweb.com";
+    private static final String PATH = "/payCenter/v1/pay/queryByBizOrderNo";
+//    private static final String PATH = "/payCenter/v1/pay/url/create";
     private static final String METHOD = "POST";
-    private static final String APP_KEY = "06";
-    private static final String PRIVATE_KEY_RESOURCE = "/keys/biz-private-key-online1.pem";
+//    private static final String APP_KEY = "06";
+//    private static final String PRIVATE_KEY_RESOURCE = "/keys/biz-private-key-online1.pem"; //06的
+    private static final String APP_KEY = "09";
+    private static final String PRIVATE_KEY_RESOURCE = "/keys/pay_private_key_09.pem"; //06的
 
     /** 与签名逐字节绑定的请求体（pretty 体；OkHttp 原样发送，任何格式化都会破坏签名） */
-    private static final String BODY = "{\n"
-            + "  \"requestSerialNo\" : \"FDGDSD20260000600002\",\n"
-            + "  \"bizOrderNo\" : \"FDGDSD202600006\",\n"
-            + "  \"goodsDesc\" : \"上下游辅助系统：代收单\",\n"
-            + "  \"amount\" : 50,\n"
-            + "  \"buyerName\" : \"黄金梅利\",\n"
-            + "  \"buyerUniqueId\" : \"0000032183G00001\",\n"
-            + "  \"makerName\" : \"黄金梅利\"\n"
-            + "}";
+    private static final String BODY = "{\n" +
+            "    \"bizOrderNo\": \"SYD2082277494827913216\",\n" +
+            "    \"payChannelRequestSerialNo\": \"2082277536900976640\",\n" +
+            "    \"payRequestSerialNo\": null,\n" +
+            "    \"requestSerialNo\": null,\n" +
+            "    \"channelTxId\": null\n" +
+            "  }";
 
     @Test
     public void callGatewayWithSign() throws Exception {
