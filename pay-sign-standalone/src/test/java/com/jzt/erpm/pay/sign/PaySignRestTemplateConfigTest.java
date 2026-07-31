@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class PaySignRestTemplateConfigTest {
 
-    private static final String PRIVATE_KEY_RESOURCE = "keys/biz-private-key-online1.pem";
+    private static final String PRIVATE_KEY_RESOURCE = "keys/biz-private-key-online-06.pem";
 
     @Test
     void factoryProducesSignedUtf8RestTemplate() throws IOException {

@@ -94,7 +94,7 @@ shenyu:
 sign:
   public-key-store:
     keys:
-      06: pay-public-key-online1.pem
+      06: pay-public-key-online-06.pem
 
 management:
   endpoints:
