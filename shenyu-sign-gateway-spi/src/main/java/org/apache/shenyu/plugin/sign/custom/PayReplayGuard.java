@@ -107,7 +107,7 @@ public class PayReplayGuard implements AutoCloseable {
     /**
      * 计算带随机偏移的 TTL（防缓存雪崩）。
      *
-     * <p>TTL = Base_TTL(330s) + Random(0~30s)
+     * <p>TTL = Base_TTL(300s) + Random(0~30s)
      * <ul>
      *   <li>目的：业务高峰时大量 key 集中创建，若 TTL 固定会集中过期，导致 Redis 雪崩</li>
      *   <li>随机偏移：将过期时间分散到 30s 窗口，降低 Redis 瞬时负载</li>

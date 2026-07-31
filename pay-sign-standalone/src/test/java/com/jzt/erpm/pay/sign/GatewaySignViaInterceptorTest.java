@@ -49,7 +49,7 @@ public class GatewaySignViaInterceptorTest {
             + "}";
 
     /** appKey=06 对应的生产私钥（classpath 下） */
-    private static final String PRIVATE_KEY_RESOURCE = "keys/biz-private-key-online1.pem";
+    private static final String PRIVATE_KEY_RESOURCE = "keys/biz-private-key-online-06.pem";
 
     private static final String APP_KEY = "06";
 
@@ -115,7 +115,7 @@ public class GatewaySignViaInterceptorTest {
                 .getResourceAsStream(PRIVATE_KEY_RESOURCE)) {
             if (in == null) {
                 throw new IllegalStateException("私钥资源未找到: " + PRIVATE_KEY_RESOURCE
-                        + "（请确认 pay-sign-standalone/src/main/resources/keys/biz-private-key-online1.pem 存在）");
+                        + "（请确认 pay-sign-standalone/src/main/resources/keys/biz-private-key-online-06.pem 存在）");
             }
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }

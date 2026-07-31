@@ -2,7 +2,7 @@
  * 网关验签成功示例（pay-sign-standalone 内置，使用 OkHttp 调用线上网关）。
  *
  * 演示「业务系统发出支付请求前」如何用本模块给请求加签，并真正打到 shenyu 网关完成验签：
- *   1. 用 appKey=06 对应的生产私钥（classpath:/keys/biz-private-key-online1.pem）加签；
+ *   1. 用 appKey=06 对应的生产私钥（classpath:/keys/biz-private-key-online-06.pem）加签；
  *   2. 签名串 = METHOD\nURL\nTS\nNONCE\nBODY\n（与网关 PayRsaSignService 完全一致）；
  *   3. 用 OkHttp 发送，body 逐字节原样发出（OkHttp 不做 JSON 格式化，故签名必然对齐）；
  *   4. 断言：只要不是 401 sign verify failed（即验签通过），即视为成功示例。
@@ -34,7 +34,7 @@ public class GatewaySignCallExampleTest {
 //    private static final String PATH = "/payCenter/v1/pay/url/create";
     private static final String METHOD = "POST";
 //    private static final String APP_KEY = "06";
-//    private static final String PRIVATE_KEY_RESOURCE = "/keys/biz-private-key-online1.pem"; //06的
+//    private static final String PRIVATE_KEY_RESOURCE = "/keys/biz-private-key-online-06.pem"; //06的
     private static final String APP_KEY = "09";
     private static final String PRIVATE_KEY_RESOURCE = "/keys/pay_private_key_09.pem"; //06的
 

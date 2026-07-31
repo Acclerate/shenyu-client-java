@@ -8,7 +8,7 @@
  *   mvn -pl shenyu-springcloud-demo test -Dtest=PaySignHeaderPrintTest
  *
  * 说明：
- *   - 私钥取 appKey=06 对应的生产私钥：classpath 资源 /keys/biz-private-key-online1.pem
+ *   - 私钥取 appKey=06 对应的生产私钥：classpath 资源 /keys/biz-private-key-online-06.pem
  *   - 网关验签时间窗 ±300s，打印出的头约 5 分钟内有效，过期重跑本测试即可。
  *   - 请求体为与签名逐字节绑定的 pretty 体（与网关已验证通过的字节一致），切勿改动格式后再发。
  */

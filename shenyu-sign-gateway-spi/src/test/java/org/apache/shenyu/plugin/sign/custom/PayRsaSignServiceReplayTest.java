@@ -59,7 +59,7 @@ class PayRsaSignServiceReplayTest {
     void setUp() {
         replayGuard = mock(PayReplayGuard.class);
         when(replayGuard.getProps()).thenReturn(PayReplayProperties.of(
-                true, "redis://ignored", 330, 500L, 3, 30_000L));
+                true, "redis://ignored", 330, 500L, true, 30_000L));
         // replayGuard 注入，隔离 replay 行为
         service = new PayRsaSignService(appKey -> keyPair.getPublic(), replayGuard);
     }

@@ -1,5 +1,8 @@
 package com.jzt.erpm.pay.sign;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpRequest;
 import org.springframework.http.client.ClientHttpRequestExecution;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
@@ -45,6 +48,8 @@ import java.nio.charset.StandardCharsets;
  * @since 1.0.0
  */
 public class PaySignInterceptor implements ClientHttpRequestInterceptor {
+
+    private static final Log LOG = LogFactory.getLog(PaySignInterceptor.class);
 
     private static final String HEADER_TIMESTAMP = "X-Pay-Timestamp";
     private static final String HEADER_NONCE = "X-Pay-Nonce";
@@ -97,6 +102,16 @@ public class PaySignInterceptor implements ClientHttpRequestInterceptor {
         // 必须显式 UTF-8：验签侧(PaySignUtils.sign / erpm)一律 UTF-8，
         // 用平台默认编码会在 Windows(GBK) 下导致中文 body 签名串不一致 → 我方验签失败
         String bodyStr = new String(body, StandardCharsets.UTF_8);
+
+        // GET 带 body 是高危反模式：本拦截器会照常把真实 body 算进签名串（与网关侧按真实 body 验签一致），
+        // 但链路中一旦有 nginx(默认 proxy_pass 剥离 GET body)/CDN/某些 LB 丢弃 GET body，
+        // 网关读到的 body 将为空 → 与本侧签名串第5行不一致 → 401 sign verify failed。
+        // HTTP/1.1 RFC 7231 §4.3.1 虽允许 GET 带 body 但语义未定义，此处仅告警不阻断（避免误伤合法场景）。
+        if (HttpMethod.GET.name().equalsIgnoreCase(method) && body != null && body.length > 0) {
+            LOG.warn("GET 请求携带了 " + body.length + " 字节的 body 并将参与签名。"
+                    + "若链路中存在 nginx/CDN 等会剥离 GET body 的组件，网关侧读到空 body 将导致 401 sign verify failed。"
+                    + "建议 GET 请求不要带 body（参数请放 query string）。URL=" + url);
+        }
 
         SignResult signResult = paySigner.sign(method, url, timestamp, nonce, bodyStr);
 

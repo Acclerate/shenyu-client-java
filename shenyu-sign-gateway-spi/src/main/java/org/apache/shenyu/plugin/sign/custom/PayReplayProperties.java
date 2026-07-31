@@ -48,17 +48,18 @@ public final class PayReplayProperties {
 
     /**
      * 从环境变量构造（全部有默认值）。
-     *
+     * <p>PAY_REPLAY_ENABLED 整个防重放功能下线：直接 return true 放行，不连 Redis、不查本地缓存，网关行为与旧版完全一致
      * <p>REDIS_URI 取 {@code PAY_REPLAY_REDIS_URI}；为空则视为未配置（功能关闭，fail-open 放行）。
      *
      * <p>本地缓存兜底：Redis 故障时使用 Guava Cache（ShenYu Bootstrap 自身依赖）
      * 提供单节点级别的防重放保护。开关默认开启，可通过 PAY_REPLAY_LOCAL_CACHE_ENABLED=false 关闭。
+     * 仅在 Redis 故障降级路径上生效：关掉则 Redis 一挂就直接放行（fail-open）；打开则 Redis 挂了用 Guava 本地缓存做单节点兜底
      *
      * @return 配置实例
      */
     public static PayReplayProperties fromEnv() {
-        final boolean enabled = Boolean.parseBoolean(env("PAY_REPLAY_ENABLED", "false"));
-        final String uri = env("PAY_REPLAY_REDIS_URI", "");
+        final boolean enabled = Boolean.parseBoolean(env("PAY_REPLAY_ENABLED", "true"));
+        final String uri = env("PAY_REPLAY_REDIS_URI", "redis://10.6.5.117:32346/0");
         return new PayReplayProperties(
                 enabled && !uri.trim().isEmpty(),
                 uri.trim(),
